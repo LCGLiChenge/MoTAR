@@ -1,0 +1,72 @@
+{
+  "audit_version": 1,
+  "audit_date": "2026-08-26",
+  "verification_status": "passed_with_explained_reference_delta",
+  "dataset_root": "/mnt/data/heyefei/lichenge/Mixture-of-Tokenizer/AR/data/imagenet-titok_l32-mot199440ema-adm-256_packed",
+  "source": {
+    "mot_checkpoint": "/home/heyefei/lichenge/MoT/weights/sophiaa_root_latest/latest.pt",
+    "mot_state_key": "model_ema",
+    "mot_step": 199440,
+    "mot_ema_namespaces": {"llamagen_vq": 343, "latent_decoder": 318, "router": 31},
+    "mot_ema_contains_titok_encoder_or_codebook": false,
+    "titok_checkpoint": "/home/heyefei/lichenge/1d-tokenizer/tokenizer_titok_l32.bin",
+    "titok_scope": "original frozen TiTok-L32; not finetuned by the MoT checkpoint",
+    "fixed_mask_tokens": 96,
+    "mask_ratio": 0.375,
+    "extraction_precision": "fp32",
+    "world_size": 3
+  },
+  "arrays": {
+    "titok_codes.npy": {"shape": [1281167, 2, 32], "dtype": "uint16", "min": 0, "max": 4095},
+    "llamagen_codes.npy": {"shape": [1281167, 2, 256], "dtype": "uint16", "min": 0, "max": 16383},
+    "labels.npy": {"shape": [1281167], "dtype": "uint16", "min": 0, "max": 999, "num_classes": 1000, "class_count_min": 732, "class_count_max": 1300},
+    "written.npy": {"shape": [1281167], "dtype": "uint8", "min": 1, "max": 1, "sum": 1281167, "all_one": true}
+  },
+  "metadata": {
+    "completed": true,
+    "num_samples": 1281167,
+    "written_samples": 1281167,
+    "num_aug": 2,
+    "llamagen_loaded_keys": 343,
+    "llamagen_retained_base_buffers": ["quantize.codebook_used"]
+  },
+  "historical_reference_comparison": {
+    "reference_root": "data/imagenet-titok_l32-llamagen94000ema-adm-256_packed",
+    "labels_exact": true,
+    "titok": {
+      "equal_tokens": 81809516,
+      "total_tokens": 81994688,
+      "equal_ratio": 0.99774165858159,
+      "augmentation_equal_ratio": [0.9977462686363292, 0.9977370485268509],
+      "modulo_3_rank_equal_ratio": [0.9977457581675471, 0.9977324768297366, 0.997746740759387],
+      "samples_with_any_difference": 165103,
+      "samples_with_one_different_token": 149560,
+      "maximum_different_tokens_per_sample": 17,
+      "interpretation": "Same original TiTok-L32 checkpoint; sparse, rank-independent nearest-codebook boundary differences between extraction runs, not index misalignment."
+    },
+    "llamagen": {
+      "equal_tokens": 445180461,
+      "total_tokens": 655957504,
+      "equal_ratio": 0.6786727162740104,
+      "exact_grids": 0,
+      "exact_grid_ratio": 0.0,
+      "interpretation": "Expected global target change from loading all 343 MoT EMA LlamaGen parameters."
+    }
+  },
+  "trainer_loader_check": {
+    "accepted": true,
+    "length": 1281167,
+    "num_aug": 2,
+    "sample_indices": [0, 640583, 1281166],
+    "titok_tensor_shape": [32],
+    "llamagen_tensor_shape": [256],
+    "tensor_dtype": "torch.int64"
+  },
+  "sha256": {
+    "titok_codes.npy": "aa10f22d869cc05c6eea5e00497aac0d895c6c2db36806231e0192d718f322d6",
+    "llamagen_codes.npy": "2be2246d90d70965208a79c67a98cc5b5f61c5fd51da75d693e660f1d7c174a7",
+    "labels.npy": "0c2ddd65bd658853cb92839a358cc34962c91416d22448edf07490e72f2dbd0a",
+    "written.npy": "db98a788b153168e9e9b8caa4a84b107d2401cc971a854f6e2f8c0b0b14ef60f",
+    "meta.json": "37178ad9a057f40c03f458b1be3db73896dc5d4eda5ab0d5da01c0b28c0d2d7f"
+  }
+}

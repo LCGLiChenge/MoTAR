@@ -1,0 +1,61 @@
+model:
+  n_layer: 24
+  n_head: 16
+  dim: 1024
+  model_type: c2i
+  vocab_size: 16384
+  block_size: 256
+  num_classes: 1000
+  cls_token_num: 1
+  resid_dropout_p: 0.1
+  ffn_dropout_p: 0.1
+  drop_path_rate: 0.0
+  token_dropout_p: 0.1
+  position_order: random
+  grad_checkpointing: true
+  zero_class_qk: true
+  num_inference_steps: 88
+  titok_vocab_size: 4096
+  titok_num_tokens: 32
+  titok_conditioning: prefix
+  loss_1d_weight: 1.5  # pilot 1D stream learned materially slower than 2D
+  loss_2d_weight: 1.0
+
+training:
+  total_epochs: 150
+  gradient_accumulation_steps: 1
+  mixed_precision: bf16
+  log_with: tensorboard
+  seed: 0
+  log_every: 20
+
+optimizer:
+  base_lr: 1.75e-5
+  new_lr: 1.75e-5
+  reference_global_batch_size: 576
+  lr_scaling: sqrt
+  weight_decay: 0.05
+  beta1: 0.9
+  beta2: 0.95
+  max_grad_norm: 1.0
+  skip_grad_epochs: 0.045
+  skip_grad_norm: 40.0
+
+scheduler:
+  warmup_epochs: 2.25
+  min_lr_ratio: 0.05
+  num_cycles: 0.5
+
+dataloader:
+  num_workers: 8
+  prefetch_factor: 4
+  pin_memory: true
+
+checkpoint:
+  save_every_epochs: 1
+  stable_name: latest
+
+h200:
+  required_gpu_count: 8
+  memory_fraction: 0.90
+  batch_candidates: [768, 704, 640, 576, 512, 448, 384, 320, 256]

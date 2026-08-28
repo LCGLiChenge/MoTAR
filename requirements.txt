@@ -1,0 +1,7 @@
+# Install an H200-compatible CUDA build of PyTorch first.
+accelerate>=1.2,<2
+einops>=0.7,<1
+numpy>=1.26,<3
+omegaconf>=2.3,<3
+safetensors>=0.4,<1
+tensorboard>=2.14

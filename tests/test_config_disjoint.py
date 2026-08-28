@@ -35,6 +35,18 @@ def test_registered_config_rejects_weight_drift():
         validate_registered_config(config, 150)
 
 
+def test_matched_baseline_keeps_the_main_run_identical():
+    method = OmegaConf.load("configs/h200_8gpu_150epoch_disjoint.yaml")
+    baseline = OmegaConf.load("configs/h200_8gpu_150epoch_matched_baseline.yaml")
+    sections = (
+        "model", "training", "optimizer", "scheduler", "dataloader", "checkpoint", "h200"
+    )
+    for section in sections:
+        assert OmegaConf.to_container(baseline[section], resolve=True) == OmegaConf.to_container(
+            method[section], resolve=True
+        )
+
+
 def test_wandb_run_id_is_stable_across_resume(tmp_path, monkeypatch):
     class FakeAccelerator:
         is_main_process = True

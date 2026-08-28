@@ -273,14 +273,46 @@ torchrun --standalone --nproc_per_node=8 evaluate_1d_disjoint.py \
 The report includes overall, per-position, and 0-3/4-7/8-15/16-23/24-31
 cross-entropy and top-1/top-5 accuracy.
 
+## Fixed 2D diagnostic and paper protocol
+
+Evaluate 2D on the same fixed 8192 samples and augmentation. The per-sample
+order is deterministic and independent of batch size or distributed world size:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+torchrun --standalone --nproc_per_node=8 evaluate_2d.py \
+  --checkpoint-kind disjoint \
+  --checkpoint-dir "$RESULTS_DIR/$EXP_NAME/checkpoints/latest" \
+  --packed-code-root "$PACKED_CODE_ROOT" \
+  --output-json "$RESULTS_DIR/$EXP_NAME/eval/diagnostic_2d_8192.json" \
+  --num-samples 8192 \
+  --batch-size 32 \
+  --augmentation 0 \
+  --order-seed 20260828
+```
+
+The full matched-control, multi-seed, ablation, compute-reporting, FID, and
+claim rules are registered in
+[docs/PAPER_EXPERIMENT_PROTOCOL.md](docs/PAPER_EXPERIMENT_PROTOCOL.md). The
+included optimizer-matched control is launched only after reusing the method's
+selected micro-batch:
+
+```bash
+export MATCHED_MICRO_BATCH_SIZE="$(<"$RESULTS_DIR/$EXP_NAME/h200_micro_batch_size.txt")"
+bash scripts/launch_h200_matched_baseline.sh
+```
+
+The older `configs/h200_8gpu_150epoch.yaml` is not the paper control because
+its optimizer schedule differs from the selected disjoint run.
+
 ## Tests
 
 CPU/static tests do not start the 150-epoch job:
 
 ```bash
 python -m pip install -r requirements-dev.txt
-python -m py_compile train_disjoint.py evaluate_1d_disjoint.py motar/*.py scripts/*.py
-bash -n scripts/launch_h200_disjoint.sh scripts/launch_extract_h200.sh
+python -m py_compile train_disjoint.py evaluate_1d_disjoint.py evaluate_2d.py motar/*.py scripts/*.py
+bash -n scripts/launch_h200_disjoint.sh scripts/launch_h200_matched_baseline.sh scripts/launch_extract_h200.sh
 pytest -q
 ```
 

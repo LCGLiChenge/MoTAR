@@ -8,7 +8,6 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-
 LATEST_NAME = "latest"
 STAGED_NAME = ".latest-next"
 PREVIOUS_NAME = ".latest-previous"

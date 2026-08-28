@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-
 from RandAR.model.llamagen_gpt import KVCache, RMSNorm
 from RandAR.model.randar_gpt import TransformerBlock
 from RandAR.model.utils import interleave_tokens

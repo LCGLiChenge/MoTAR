@@ -4,8 +4,9 @@ Unified autoregressive training for:
 
 - original TiTok-L32 1D codes: 32 tokens, vocabulary 4096;
 - MoT-finetuned original LlamaGen VQ-16 2D codes: 256 tokens, vocabulary 16384;
-- one class-conditional AR model trained from scratch, with a modest 1.5x loss
-  weight on the slower-learning 1D stream.
+- a 24-layer unified AR trunk plus a disjoint 4-layer causal 1D sidecar, both
+  trained from scratch; the trunk keeps the 1.5x 1D loss and the sidecar learns a
+  residual correction without sending gradients into the trunk.
 
 This handoff is registered for **8 NVIDIA H200 GPUs** and **150 total epochs**.
 The first launch always initializes the AR model randomly and trains it from
@@ -13,15 +14,16 @@ scratch. It does not accept a checkpoint from the current 4-GPU experiment.
 
 ## What is included
 
-- the verified 24-layer, 1024-wide unified AR model;
+- the verified 24-layer, 1024-wide unified AR trunk;
+- the selected 4-layer disjoint TiTok-1D residual sidecar;
 - the minimal MIT-licensed RandAR model subset;
 - reproducible downloads for the exact MoT and TiTok-L32 checkpoints plus the
   pinned LlamaGen VQ-16 source;
 - packed-code validation;
-- real H200 forward/backward/AdamW memory probing;
+- real H200 two-model, two-backward, two-AdamW memory probing;
 - automatic per-GPU micro-batch selection;
-- 150-epoch training with sqrt learning-rate scaling from the historical
-  global batch 576;
+- 150-epoch training with the pilot-selected fixed LRs: trunk base 1e-4,
+  TiTok-new modules 2e-4, and sidecar 2e-4;
 - a latest-only checkpoint policy.
 
 Tokenizer weights and image datasets are not needed during AR training because
@@ -83,7 +85,7 @@ wandb login
 Start the new H200 experiment:
 
 ```bash
-bash scripts/launch_h200.sh
+bash scripts/launch_h200_disjoint.sh
 ```
 
 Do not copy or provide an old AR checkpoint. On its first launch, the output
@@ -95,14 +97,14 @@ The launcher requires exactly eight visible H200s. Override their indices if
 needed:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 bash scripts/launch_h200.sh
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 bash scripts/launch_h200_disjoint.sh
 ```
 
 ## Automatic H200 batch sizing
 
 The default is `MICRO_BATCH_SIZE=auto`. Before torchrun starts, the launcher
-uses one visible H200 and performs a real bf16 forward, backward, gradient clip,
-and fused AdamW step for descending candidates:
+uses one visible H200 and performs real bf16 trunk+sidecar forwards, two
+backwards, independent gradient clips, and two fused AdamW steps for descending candidates:
 
 ```text
 768, 704, 640, 576, 512, 448, 384, 320, 256
@@ -122,23 +124,39 @@ and reused on restart. The training global batch is:
 micro_batch_per_gpu * 8
 ```
 
-The base learning rate is scaled from `1.75e-5 @ global batch 576` with the
-square root of the batch ratio. The exact batch and learning rates are recorded
-in `run_plan.json` and every checkpoint's `metadata.json`.
+The selected pilot LRs are fixed across the probed batch sizes: trunk base
+`1e-4`, TiTok-new modules `2e-4`, and sidecar `2e-4`. They are deliberately not
+sqrt-scaled because `4e-4` for the new path failed the local pilot. Warmup is
+`0.225` ImageNet epoch, matching the pilot’s 500 updates at global batch 576.
+The exact batch and learning rates are recorded in `run_plan.json` and every
+checkpoint’s `metadata.json`.
 
 For a more conservative margin:
 
 ```bash
-H200_MEMORY_FRACTION=0.85 bash scripts/launch_h200.sh
+H200_MEMORY_FRACTION=0.85 bash scripts/launch_h200_disjoint.sh
 ```
 
 For a deliberate fixed value:
 
 ```bash
-MICRO_BATCH_SIZE=512 bash scripts/launch_h200.sh
+MICRO_BATCH_SIZE=512 bash scripts/launch_h200_disjoint.sh
 ```
 
 Do not guess a larger batch without running the probe.
+
+## Why this structure was selected
+
+At the same 2,000 optimizer steps, on the fixed first 8,192 packed samples and
+augmentation 0, the disjoint depth-4 sidecar improved 1D CE from `8.030757` to
+`7.910253`; top-1 rose from `0.001411` to `0.002048`, and top-5 from `0.006161`
+to `0.009499`. The 2D CE was not harmed (`7.356838` baseline versus `7.351757`
+with the sidecar). Layer-local experts and shared/partially isolated sidecars
+were rejected because they either gave negligible 1D gain or worsened 2D.
+
+This is an early learning-speed result, not a generation-FID result. The 2,000-step
+samples were still blurry, so the H200 run must be judged with the same fixed
+1D/2D diagnostics and later generation metrics.
 
 ## Why the 1D loss weight is 1.5
 
@@ -162,7 +180,7 @@ The target is 150 total ImageNet-equivalent epochs.
   `$RESULTS_DIR/$EXP_NAME/checkpoints/latest` automatically.
 
 There is no command-line path for importing a prior AR checkpoint. Native H200
-restarts load their own model and AdamW state, then rebuild the cosine schedule
+restarts load both models and both AdamW states, then rebuild the cosine schedule
 from the completed epoch recorded in `latest/metadata.json`.
 
 ## Checkpoint policy
@@ -176,6 +194,10 @@ $RESULTS_DIR/$EXP_NAME/checkpoints/latest
 It is replaced after every epoch, including epoch 150. No `epoch_*`,
 `iters_*`, `best`, or separate final checkpoint is created.
 
+A complete `latest` contains `model.safetensors`, `model_1.safetensors`,
+`optimizer.bin`, and `optimizer_1.bin` for the trunk, sidecar, and their separate
+AdamW states.
+
 Saving uses two hidden transactional directories only while rotating:
 
 ```text
@@ -188,7 +210,7 @@ startup recovery chooses the last complete state. Validate the current state
 with:
 
 ```bash
-python scripts/validate_latest.py \
+python scripts/validate_disjoint_latest.py \
   "$RESULTS_DIR/$EXP_NAME/checkpoints/latest"
 ```
 
@@ -206,7 +228,7 @@ For the one-time full data hash audit:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
-python scripts/validate_setup.py \
+python scripts/validate_disjoint_setup.py \
   --packed-code-root "$PACKED_CODE_ROOT" \
   --expected-gpus 8 \
   --verify-manifest
@@ -214,8 +236,7 @@ python scripts/validate_setup.py \
 
 ## Monitoring
 
-All scalar training logs go to W&B: total/1D/2D loss, 1D/2D accuracy, gradient
-norm, learning rate, throughput, epoch progress, and global batch size. The W&B
+All scalar training logs go to W&B: total/1D/2D loss, 1D/2D accuracy, independent main/sidecar gradient norms, main/sidecar learning rates, throughput, epoch progress, and global batch size. The W&B
 run name equals `EXP_NAME`; `wandb_run_id.txt` keeps an interrupted native
 H200 resume attached to the same W&B run.
 
@@ -241,7 +262,7 @@ position metrics:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
-torchrun --standalone --nproc_per_node=8 evaluate_1d.py \
+torchrun --standalone --nproc_per_node=8 evaluate_1d_disjoint.py \
   --checkpoint-dir "$RESULTS_DIR/$EXP_NAME/checkpoints/latest" \
   --packed-code-root "$PACKED_CODE_ROOT" \
   --output-json "$RESULTS_DIR/$EXP_NAME/eval/diagnostic_1d_positions_8192.json" \
@@ -258,8 +279,8 @@ CPU/static tests do not start the 150-epoch job:
 
 ```bash
 python -m pip install -r requirements-dev.txt
-python -m py_compile train.py motar/*.py scripts/*.py
-bash -n scripts/launch_h200.sh scripts/launch_extract_h200.sh
+python -m py_compile train_disjoint.py evaluate_1d_disjoint.py motar/*.py scripts/*.py
+bash -n scripts/launch_h200_disjoint.sh scripts/launch_extract_h200.sh
 pytest -q
 ```
 

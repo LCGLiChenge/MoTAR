@@ -34,12 +34,13 @@ The expected hashes are also recorded in
 ## Regenerate packed codes on H200
 
 The MoT checkpoint is downloaded from
-`sophiaa/MoT-1-checkpoints/latest.pt`. It contains the adapted LlamaGen VQ,
-decoder, and router state but no TiTok encoder/codebook and no original
-LlamaGen base buffers. Extraction therefore also downloads the original
-TiTok-L32 and LlamaGen VQ-16 checkpoints.
+`sophiaa/MoT-1-checkpoints/latest.pt`. It contains all 343 adapted LlamaGen VQ
+parameters, but no TiTok encoder/codebook. Extraction therefore also downloads
+the original TiTok-L32 checkpoint. The original LlamaGen VQ checkpoint is not
+needed; the only omitted LlamaGen state is the eval-irrelevant
+`quantize.codebook_used` usage buffer.
 
-Required persistent storage is approximately 9.3 GB for extraction weights plus
+Required persistent storage is approximately 9.0 GB for extraction weights plus
 1.4 GiB for packed codes, excluding ImageNet itself.
 
 ```bash
@@ -50,7 +51,7 @@ export PACKED_CODE_ROOT=/persistent/data/imagenet-titok_l32-mot199440ema-adm-256
 bash scripts/launch_extract_h200.sh
 ```
 
-The launcher pins both source repositories, validates all three checkpoint
+The launcher pins both source repositories, validates both checkpoints'
 sizes and SHA256 hashes, then runs 8-rank FP32 extraction. The default extraction
 batch is 64 images per H200 before the original/flip augmentation doubles the
 encoder input. Set `EXTRACT_BATCH_SIZE=32` if the target host has co-tenancy.

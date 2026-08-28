@@ -15,8 +15,8 @@ scratch. It does not accept a checkpoint from the current 4-GPU experiment.
 
 - the verified 24-layer, 1024-wide unified AR model;
 - the minimal MIT-licensed RandAR model subset;
-- reproducible downloads for the exact MoT, TiTok-L32, and LlamaGen VQ-16
-  extraction assets;
+- reproducible downloads for the exact MoT and TiTok-L32 checkpoints plus the
+  pinned LlamaGen VQ-16 source;
 - packed-code validation;
 - real H200 forward/backward/AdamW memory probing;
 - automatic per-GPU micro-batch selection;
@@ -59,8 +59,11 @@ This downloads and SHA256-verifies:
 
 - `sophiaa/MoT-1-checkpoints/latest.pt` (6.40 GB, `model_ema`, step 199440);
 - `fun-research/TiTok/tokenizer_titok_l32.bin` (2.56 GB);
-- `FoundationVision/LlamaGen/vq_ds16_c2i.pt` (288 MB);
 - pinned TiTok and LlamaGen source commits.
+
+The MoT checkpoint already contains all 343 LlamaGen VQ parameters. The only
+omitted state is the eval-irrelevant `quantize.codebook_used` usage buffer, so
+the original LlamaGen VQ checkpoint is deliberately not downloaded.
 
 Extraction uses exactly eight GPUs, deterministic ADM center crop plus
 horizontal flip, FP32 tokenizer inference, and a per-GPU batch of 64. This is

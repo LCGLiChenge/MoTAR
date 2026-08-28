@@ -37,13 +37,6 @@ CHECKPOINTS = {
         "size": 2_564_477_610,
         "sha256": "b8f0bf61e9ee1791d8b76fa723bdcb2c85a039a7d027e597f685db492935c31f",
     },
-    "llamagen": {
-        "repo_id": "FoundationVision/LlamaGen",
-        "revision": "81e41139272c038412e4fe8f1c52a51ebbf95b8b",
-        "filename": "vq_ds16_c2i.pt",
-        "size": 287_920_306,
-        "sha256": "109aa8afb2cf3761eec23cdc8644154cb498f5ab7eef2a35264d25e5e0499f7d",
-    },
 }
 
 

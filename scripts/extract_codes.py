@@ -140,17 +140,6 @@ def load_llamagen(args, device):
         codebook_size=args.codebook_size,
         codebook_embed_dim=args.codebook_embed_dim,
     )
-    base_ckpt = torch.load(args.llamagen_ckpt, map_location="cpu", weights_only=False)
-    if isinstance(base_ckpt, dict) and "ema" in base_ckpt:
-        base_state = base_ckpt["ema"]
-    elif isinstance(base_ckpt, dict) and "model" in base_ckpt:
-        base_state = base_ckpt["model"]
-    elif isinstance(base_ckpt, dict) and "state_dict" in base_ckpt:
-        base_state = base_ckpt["state_dict"]
-    else:
-        base_state = base_ckpt
-    tokenizer.load_state_dict(base_state, strict=True)
-
     mot_ckpt = torch.load(
         args.mot_ckpt,
         map_location="cpu",
@@ -182,19 +171,25 @@ def load_llamagen(args, device):
     missing_parameters = sorted(key for key in missing if key in parameter_names)
     if missing_parameters:
         raise RuntimeError(f"Adapted LlamaGen parameters were not loaded: {missing_parameters[:20]}")
-    retained_base_buffers = sorted(key for key in missing if key not in parameter_names)
+    unrestored_buffers = sorted(key for key in missing if key not in parameter_names)
+    allowed_runtime_buffers = ["quantize.codebook_used"]
+    if unrestored_buffers != allowed_runtime_buffers:
+        raise RuntimeError(
+            "Unexpected LlamaGen buffers missing from MoT checkpoint: "
+            f"{unrestored_buffers}; expected only {allowed_runtime_buffers}"
+        )
 
     checkpoint_args = mot_ckpt.get("args", {})
     checkpoint_args = vars(checkpoint_args) if hasattr(checkpoint_args, "__dict__") else checkpoint_args
     info = {
         "step": int(mot_ckpt.get("step", -1)),
         "loaded_keys": len(adapted),
-        "retained_base_buffers": retained_base_buffers,
+        "unrestored_buffers": unrestored_buffers,
         "mask_ratio": checkpoint_args.get("mask_ratio") if isinstance(checkpoint_args, dict) else None,
         "router_min_tokens": checkpoint_args.get("router_min_tokens") if isinstance(checkpoint_args, dict) else None,
         "router_max_tokens": checkpoint_args.get("router_max_tokens") if isinstance(checkpoint_args, dict) else None,
     }
-    del mot_ckpt, base_ckpt, base_state, adapted, current, parameter_names
+    del mot_ckpt, adapted, current, parameter_names
     return tokenizer.to(device).eval().requires_grad_(False), info
 
 
@@ -273,7 +268,6 @@ def write_metadata(args, output_root, dataset, mot_info, world_size, completed, 
         },
         "titok_config": str(Path(args.titok_config).resolve()),
         "titok_ckpt": str(Path(args.titok_ckpt).resolve()),
-        "llamagen_base_ckpt": str(Path(args.llamagen_ckpt).resolve()),
         "mot_ckpt": str(Path(args.mot_ckpt).resolve()),
         "mot_state_key": args.mot_state_key,
         "mot_step": mot_info["step"],
@@ -281,7 +275,7 @@ def write_metadata(args, output_root, dataset, mot_info, world_size, completed, 
         "mot_router_min_tokens": mot_info["router_min_tokens"],
         "mot_router_max_tokens": mot_info["router_max_tokens"],
         "llamagen_loaded_keys": mot_info["loaded_keys"],
-        "llamagen_retained_base_buffers": mot_info["retained_base_buffers"],
+        "llamagen_unrestored_buffers": mot_info["unrestored_buffers"],
         "extraction_precision": args.mixed_precision,
         "world_size": world_size,
         "updated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -417,7 +411,6 @@ if __name__ == "__main__":
     parser.add_argument("--titok-config", required=True)
     parser.add_argument("--titok-ckpt", required=True)
     parser.add_argument("--llamagen-root", required=True)
-    parser.add_argument("--llamagen-ckpt", required=True)
     parser.add_argument("--codebook-size", type=int, default=16384)
     parser.add_argument("--codebook-embed-dim", type=int, default=8)
     main(parser.parse_args())

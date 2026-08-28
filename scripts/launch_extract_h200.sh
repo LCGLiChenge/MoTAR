@@ -32,10 +32,9 @@ TITOK_ROOT="${ASSET_ROOT}/repos/titok"
 LLAMAGEN_ROOT="${ASSET_ROOT}/repos/llamagen"
 TITOK_CONFIG="${TITOK_ROOT}/configs/infer/TiTok/titok_l32.yaml"
 TITOK_CKPT="${ASSET_ROOT}/checkpoints/titok/tokenizer_titok_l32.bin"
-LLAMAGEN_CKPT="${ASSET_ROOT}/checkpoints/llamagen/vq_ds16_c2i.pt"
 MOT_CKPT="${ASSET_ROOT}/checkpoints/mot/latest.pt"
 
-for path in "${IMAGENET_TRAIN}" "${TITOK_ROOT}" "${LLAMAGEN_ROOT}" "${TITOK_CONFIG}" "${TITOK_CKPT}" "${LLAMAGEN_CKPT}" "${MOT_CKPT}"; do
+for path in "${IMAGENET_TRAIN}" "${TITOK_ROOT}" "${LLAMAGEN_ROOT}" "${TITOK_CONFIG}" "${TITOK_CKPT}" "${MOT_CKPT}"; do
   if [[ ! -e "${path}" ]]; then
     echo "Required extraction input not found: ${path}" >&2
     exit 4
@@ -65,5 +64,4 @@ torchrun \
   --titok-config "${TITOK_CONFIG}" \
   --titok-ckpt "${TITOK_CKPT}" \
   --llamagen-root "${LLAMAGEN_ROOT}" \
-  --llamagen-ckpt "${LLAMAGEN_CKPT}" \
   "${RESUME_ARGS[@]}"

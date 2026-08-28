@@ -47,4 +47,4 @@ def test_extraction_assets_are_pinned():
     assert REPOSITORIES["llamagen"]["commit"] == "ce98ec41803a74a90ce68c40ababa9eaeffeb4ec"
     assert CHECKPOINTS["mot"]["size"] == 6_400_628_829
     assert CHECKPOINTS["titok"]["size"] == 2_564_477_610
-    assert CHECKPOINTS["llamagen"]["size"] == 287_920_306
+    assert "llamagen" not in CHECKPOINTS

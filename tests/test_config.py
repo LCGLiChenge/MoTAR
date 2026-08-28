@@ -1,7 +1,7 @@
 import pytest
 from omegaconf import OmegaConf
 
-from train import validate_registered_config
+from train import resolve_wandb_run_id, validate_registered_config
 
 
 def test_h200_registered_invariants():
@@ -15,6 +15,7 @@ def test_h200_registered_invariants():
     assert config.model.loss_1d_weight == 1.5
     assert config.model.loss_2d_weight == 1.0
     assert config.training.mixed_precision == "bf16"
+    assert config.training.log_with == "wandb"
     assert config.checkpoint.save_every_epochs == 1
     assert config.checkpoint.stable_name == "latest"
     validate_registered_config(config, 150)
@@ -25,3 +26,18 @@ def test_registered_config_rejects_weight_drift():
     config.model.loss_1d_weight = 1.0
     with pytest.raises(ValueError, match="loss_1d_weight"):
         validate_registered_config(config, 150)
+
+
+def test_wandb_run_id_is_stable_across_resume(tmp_path, monkeypatch):
+    class FakeAccelerator:
+        is_main_process = True
+
+        def wait_for_everyone(self):
+            pass
+
+    accelerator = FakeAccelerator()
+    monkeypatch.setenv("WANDB_RUN_ID", "first-run-id")
+    assert resolve_wandb_run_id(tmp_path, accelerator, resume=False) == "first-run-id"
+    monkeypatch.setenv("WANDB_RUN_ID", "different-id")
+    assert resolve_wandb_run_id(tmp_path, accelerator, resume=True) == "first-run-id"
+    assert resolve_wandb_run_id(tmp_path, accelerator, resume=False) == "different-id"

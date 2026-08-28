@@ -8,7 +8,9 @@ import hashlib
 import inspect
 import json
 import math
+import os
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +90,7 @@ def validate_registered_config(config, total_epochs: int) -> None:
         "model.grad_checkpointing": True,
         "training.gradient_accumulation_steps": 1,
         "training.mixed_precision": "bf16",
+        "training.log_with": "wandb",
         "h200.required_gpu_count": 8,
         "checkpoint.save_every_epochs": 1,
         "checkpoint.stable_name": "latest",
@@ -103,6 +106,29 @@ def validate_registered_config(config, total_epochs: int) -> None:
     }
     if mismatches:
         raise ValueError(f"Registered H200 config invariants changed: {mismatches}")
+
+
+def resolve_wandb_run_id(
+    experiment_dir: Path,
+    accelerator: Accelerator,
+    *,
+    resume: bool,
+) -> str:
+    run_id_path = experiment_dir / "wandb_run_id.txt"
+    if accelerator.is_main_process:
+        experiment_dir.mkdir(parents=True, exist_ok=True)
+        if resume and run_id_path.is_file():
+            run_id = run_id_path.read_text().strip()
+        else:
+            run_id = os.environ.get("WANDB_RUN_ID", "").strip() or uuid.uuid4().hex[:16]
+            run_id_path.write_text(run_id + "\n")
+        if not run_id:
+            raise RuntimeError(f"Empty W&B run id in {run_id_path}")
+    accelerator.wait_for_everyone()
+    run_id = run_id_path.read_text().strip()
+    if not run_id:
+        raise RuntimeError(f"Empty W&B run id in {run_id_path}")
+    return run_id
 
 
 def build_optimizer(model, config, global_batch_size: int):
@@ -346,6 +372,10 @@ def main(args: argparse.Namespace) -> None:
     )
     scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda)
     model, optimizer = accelerator.prepare(model, optimizer)
+    wandb_project = os.environ.get("WANDB_PROJECT", "motar-unified-ar")
+    wandb_run_id = resolve_wandb_run_id(
+        experiment_dir, accelerator, resume=resume_path is not None
+    )
 
     if accelerator.is_main_process:
         experiment_dir.mkdir(parents=True, exist_ok=True)
@@ -370,17 +400,25 @@ def main(args: argparse.Namespace) -> None:
             "lr_scaling": str(config.optimizer.lr_scaling),
             "resume": str(resume_path) if resume_path else None,
             "checkpoint_policy": "one stable checkpoints/latest, replaced every epoch",
+            "wandb_project": wandb_project,
+            "wandb_run_id": wandb_run_id,
         }
         (experiment_dir / "run_plan.json").write_text(
             json.dumps(plan, indent=2, sort_keys=True) + "\n"
         )
         logger.info("Run plan: %s", json.dumps(plan, sort_keys=True))
 
-    if config.training.get("log_with", None):
-        accelerator.init_trackers(
-            project_name="motar-unified-ar",
-            config=flatten_config(OmegaConf.to_container(config, resolve=True)),
-        )
+    accelerator.init_trackers(
+        project_name=wandb_project,
+        config=flatten_config(OmegaConf.to_container(config, resolve=True)),
+        init_kwargs={
+            "wandb": {
+                "name": args.exp_name,
+                "id": wandb_run_id,
+                "resume": "allow",
+            }
+        },
+    )
 
     log_every = int(args.log_every or config.training.log_every)
     running = {
@@ -496,6 +534,8 @@ def main(args: argparse.Namespace) -> None:
             "source_checkpoint": str(resume_path) if resume_path else None,
             "initial_progress_epochs": start_progress,
             "checkpoint_policy": "latest-only; replaced after every epoch",
+            "wandb_project": wandb_project,
+            "wandb_run_id": wandb_run_id,
             "saved_unix_time": time.time(),
         }
         latest = save_latest_checkpoint(accelerator, checkpoint_root, metadata)

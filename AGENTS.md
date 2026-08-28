@@ -10,6 +10,7 @@ Run the unified TiTok-L32 1D + MoT/LlamaGen VQ-16 2D AR experiment on exactly
 ```bash
 PACKED_CODE_ROOT=/persistent/data/codes \
 RESULTS_DIR=/persistent/results/motar \
+WANDB_PROJECT=motar-unified-ar \
 bash scripts/launch_h200.sh
 ```
 
@@ -28,26 +29,29 @@ and resumes `checkpoints/latest` automatically after the first H200 epoch.
 7. Update only `checkpoints/latest` after every epoch.
 8. Do not edit or overwrite the packed arrays.
 9. Do not commit large data, model, optimizer, or generated result files.
-10. Never signal another user's process.
+10. Log training metrics to W&B; do not create `train.log` or TensorBoard logs.
+11. Never signal another user's process.
 
 ## Codex operating procedure
 
 1. Read `README.md` and `docs/DATA_AND_CHECKPOINTS.md`.
-2. Locate or request the packed-code path. Never invent it, and never request
-   an old AR checkpoint for this run.
-3. Confirm persistent `RESULTS_DIR` has enough free space for one model and
+2. Locate the packed-code path. If absent, locate ImageNet train and run
+   `scripts/launch_extract_h200.sh`; it downloads and verifies tokenizer assets.
+   Never request an old AR checkpoint.
+3. Confirm W&B authentication or deliberately set `WANDB_MODE=offline`.
+4. Confirm persistent `RESULTS_DIR` has enough free space for one model and
    optimizer checkpoint plus a transactional copy during save.
-4. Run the validation command before launch.
-5. Start `scripts/launch_h200.sh` in a persistent terminal/session.
-6. Record the selected micro/global batch and scaled learning rates from
+5. Run the validation command before launch.
+6. Start `scripts/launch_h200.sh` in a persistent terminal/session.
+7. Record the selected micro/global batch and scaled learning rates from
    `run_plan.json`.
-7. Monitor loss, both modality losses/accuracies, gradient norm, throughput,
-   eight GPU processes, memory, temperature, and co-tenancy.
-8. On a real abnormality, send SIGINT only to the owned torchrun parent and
+8. Monitor W&B loss, both modality losses/accuracies, gradient norm,
+   throughput, eight GPU processes, memory, temperature, and co-tenancy.
+9. On a real abnormality, send SIGINT only to the owned torchrun parent and
    inspect the last complete `latest`.
-9. After every epoch, run or inspect `scripts/validate_latest.py`; confirm no
-   non-hidden checkpoint sibling exists.
-10. Completion requires `metadata.json` to show `completed_epochs: 150` and
+10. After every epoch, run or inspect `scripts/validate_latest.py`; confirm no
+    non-hidden checkpoint sibling exists.
+11. Completion requires `metadata.json` to show `completed_epochs: 150` and
     the latest checkpoint to pass validation.
 
 ## Batch policy

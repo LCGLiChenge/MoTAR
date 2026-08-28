@@ -8,6 +8,7 @@ venv/
 .env
 *.log
 events.out.tfevents.*
+assets/
 data/
 results/
 checkpoints/

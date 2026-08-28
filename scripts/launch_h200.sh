@@ -11,6 +11,7 @@ NPROC="${NPROC_PER_NODE:-8}"
 EXP_NAME="${EXP_NAME:-motar_titok_l32_mot199440_150ep_h200}"
 PACKED_CODE_ROOT="${PACKED_CODE_ROOT:?Set PACKED_CODE_ROOT to the completed packed-code directory}"
 RESULTS_DIR="${RESULTS_DIR:?Set RESULTS_DIR to persistent storage}"
+WANDB_PROJECT="${WANDB_PROJECT:-motar-unified-ar}"
 NUM_WORKERS="${NUM_WORKERS_PER_RANK:-8}"
 LOG_EVERY="${LOG_EVERY:-20}"
 MEMORY_FRACTION="${H200_MEMORY_FRACTION:-0.90}"
@@ -72,6 +73,7 @@ echo "Launching 8xH200: micro_batch_per_gpu=${MICRO_BATCH_SIZE}, global_batch=$(
 echo "Checkpoint policy: update checkpoints/latest after every epoch; no versioned checkpoints."
 
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
+export WANDB_PROJECT
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 export NCCL_ASYNC_ERROR_HANDLING="${NCCL_ASYNC_ERROR_HANDLING:-1}"
 
@@ -88,5 +90,4 @@ torchrun \
   --micro-batch-size "${MICRO_BATCH_SIZE}" \
   --num-workers "${NUM_WORKERS}" \
   --log-every "${LOG_EVERY}" \
-  "${CHECKPOINT_ARGS[@]}" \
-  2>&1 | tee -a "${RESULTS_DIR}/${EXP_NAME}/train.log"
+  "${CHECKPOINT_ARGS[@]}"

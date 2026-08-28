@@ -25,7 +25,7 @@ training:
   total_epochs: 150
   gradient_accumulation_steps: 1
   mixed_precision: bf16
-  log_with: tensorboard
+  log_with: wandb
   seed: 0
   log_every: 20
 

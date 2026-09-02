@@ -1,7 +1,7 @@
 [project]
 name = "motar"
 version = "0.1.0"
-description = "Unified TiTok-L32 1D + MoT/LlamaGen VQ-16 2D autoregressive training"
+description = "E117-routed unified TiTok-L32 and sparse LlamaGen MaskGIT training"
 requires-python = ">=3.10"
 
 [tool.pytest.ini_options]

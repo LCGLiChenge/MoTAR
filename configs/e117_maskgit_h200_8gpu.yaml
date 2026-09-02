@@ -1,0 +1,131 @@
+experiment:
+  name: e117-maskgit-h200-8gpu-seed0
+  output_dir: /persistent/results/motar/e117-maskgit-h200-8gpu-seed0
+
+# The architecture is identical to the pre-norm formal run that was validated
+# on four RTX 5090s.  H200 changes only the measured micro-batch and the number
+# of optimizer steps needed to preserve the fixed image-exposure budget.
+model:
+  dim: 768
+  n_layer: 24
+  n_head: 16
+  n_kv_head: null
+  multiple_of: 256
+  ffn_dim_multiplier: null
+  rope_base: 10000.0
+  norm_eps: 1.0e-5
+  initializer_range: 0.02
+  attn_dropout_p: 0.1
+  resid_dropout_p: 0.1
+  ffn_dropout_p: 0.1
+  drop_path_rate: 0.0
+  token_dropout_p: 0.1
+  num_classes: 1000
+  class_dropout_prob: 0.1
+  titok_vocab_size: 4096
+  titok_num_tokens: 32
+  llamagen_vocab_size: 16384
+  grid_size: 16
+  max_sparse_tokens: 128
+  grad_checkpointing: false
+  zero_init_output: false
+  output_bias: true
+  backbone_type: llama
+
+# The launcher replaces these placeholders in a persisted resolved_config.yaml.
+data:
+  packed_code_root: /replace/train-packed-codes
+  route_cache: /replace/train-e117-routes
+  eval_packed_code_root: /replace/val-packed-codes
+  eval_route_cache: /replace/val-e117-routes
+  train_all_sources: true
+  eval_fraction: 0.1
+  split_seed: 20260901
+  full_1d_replay: true
+  replay_eval_fraction: 0.002
+  num_workers: 8
+
+optimizer:
+  lr: 1.0e-4
+  beta1: 0.9
+  beta2: 0.96
+  weight_decay: 0.03
+  warmup_steps: 20000
+  min_lr_ratio: 0.05
+  max_grad_norm: 1.0
+
+training:
+  seed: 0
+  required_world_size: 8
+  mixed_precision: bf16
+  enable_tf32: true
+  per_gpu_batch_size: 128
+  replay_1d_per_gpu_batch_size: 128
+  gradient_accumulation_steps: 1
+  max_steps: 1000000
+  # Original TiTok generator budget: 500,000 * global batch 2,048.
+  target_image_exposures: 1024000000
+  reference_num_train_sources: 1281167
+  reference_max_steps: 500000
+  reference_global_batch_size: 2048
+  reference_warmup_steps: 10000
+  require_equal_branch_exposures: true
+  reset_replay_each_epoch: true
+  label_smoothing: 0.1
+  unmasked_loss_weight: 0.1
+  loss_normalization: global_titok
+  loss_1d_weight: 1.5
+  loss_2d_weight: 1.0
+  use_ema: true
+  ema_decay: 0.999
+
+sampling:
+  steps_1d: 8
+  steps_2d: 8
+
+logging:
+  log_with: wandb
+  require_wandb: true
+  project: motar-maskgit
+  run_id: replace-by-launcher
+  log_every: 20
+
+checkpoint:
+  save_latest: true
+  save_on_pass_only: false
+  save_on_eval: false
+  save_every_epochs: 1
+  compact: false
+  auto_resume: true
+
+feasibility:
+  eval_seed: 20260901
+  eval_mask_ratio: 0.75
+  eval_batch_size: 32
+  eval_batches: 8
+  eval_1d_batch_size: 64
+  eval_1d_batches: 4
+  eval_every: 1250
+  sample_count: 2
+  min_relative_loss_drop_1d: null
+  max_relative_loss_increase_1d: null
+  max_global_relative_loss_increase_1d: 0.005
+  min_relative_loss_drop_2d: 0.02
+  random_top5_multiplier: 2.0
+  min_global_context_loss_delta_1d: 0.002
+  min_global_label_loss_delta_1d: 0.001
+  min_global_top5_multiplier_1d: 2.0
+  min_context_loss_delta_2d: 0.002
+  min_label_loss_delta_2d: null
+  min_prefix_loss_delta_2d: 0.002
+  min_steps: 1250
+  required_consecutive_passes: 2
+  stop_on_pass: false
+
+h200:
+  required_gpu_count: 8
+  memory_fraction: 0.90
+  # Each candidate is tested in its own process. K=128 is the worst-case route.
+  batch_candidates: [768, 704, 640, 576, 512, 448, 416, 384, 352, 320, 288, 256, 240, 224, 208, 192, 176, 160, 144, 128, 112, 96, 80, 64, 48, 32, 24, 16, 8]
+  reference_eval_exposures: 1280000
+  reference_min_gate_exposures: 1280000

@@ -1,77 +1,91 @@
 # AGENTS.md
 
-## Objective
+## Current objective
 
-Run the unified TiTok-L32 1D + MoT/LlamaGen VQ-16 2D AR experiment on exactly
-8 H200 GPUs until the checkpoint metadata reports `completed_epochs: 150`.
+Run the E117-routed unified TiTok-L32 1D + MoT/LlamaGen VQ-16 sparse-2D
+MaskGIT experiment from random initialization on exactly eight NVIDIA H200s.
+The formal budget is 1,024,000,000 examples, matching TiTok's 500k-step,
+global-batch-2048 generator training.
+
+Do not substitute the older 150-epoch causal-AR launcher. Its documentation is
+kept only in `docs/LEGACY_CAUSAL_AR.md`.
 
 ## Authoritative launch
 
-```bash
-PACKED_CODE_ROOT=/persistent/data/codes \
-RESULTS_DIR=/persistent/results/motar \
-WANDB_PROJECT=motar-unified-ar \
-bash scripts/launch_h200.sh
-```
+Read `README.md` and `docs/DATA_AND_CHECKPOINTS.md` first. Then use:
 
-The launcher validates data and devices, probes H200 memory, selects the batch,
-and resumes `checkpoints/latest` automatically after the first H200 epoch.
+```bash
+PACKED_CODE_ROOT=/persistent/data/train-codes \
+EVAL_PACKED_CODE_ROOT=/persistent/data/val-codes \
+E117_ROUTE_CACHE=/persistent/data/train-e117-routes \
+E117_EVAL_ROUTE_CACHE=/persistent/data/val-e117-routes \
+RESULTS_DIR=/persistent/results/motar \
+WANDB_PROJECT=motar-maskgit \
+WANDB_ENTITY=your-entity \
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+bash scripts/launch_e117_maskgit_h200.sh
+```
 
 ## Invariants
 
-1. Production training uses exactly 8 H200 processes.
-2. Total training target is 150 epochs.
-3. Keep `loss_1d_weight: 1.5` and `loss_2d_weight: 1.0`.
-4. Keep bf16, gradient checkpointing, and the 24-layer/1024-wide model.
-5. Do not load any prior AR or RandAR initialization checkpoint. The first H200
-   launch is random initialization; only its own later `latest` may be resumed.
-6. Do not create versioned, best, step, or final checkpoints.
-7. Update only `checkpoints/latest` after every epoch.
-8. Do not edit or overwrite the packed arrays.
-9. Do not commit large data, model, optimizer, or generated result files.
-10. Log training metrics to W&B; do not create `train.log` or TensorBoard logs.
-11. Never signal another user's process.
+1. Formal training uses exactly eight H200 processes and bf16.
+2. Model is 24 layers, width 768, pre-norm, explicitly bidirectional.
+3. Start the generator from scratch; never import an RTX 5090/AR/RandAR
+   generator checkpoint. Native resume may use only this run's `latest.pt`.
+4. Keep TiTok arccos masking, label smoothing 0.1, visible-token weight 0.1,
+   class dropout 0.1, loss weights 1D=1.5 and 2D=1.0.
+5. Keep AdamW LR 1e-4, betas 0.9/0.96, weight decay 0.03, and full-model EMA
+   0.999. The launcher adjusts only batch-dependent step counts.
+6. Preserve 1,024,000,000 target exposures. Rounding error may be at most half
+   one selected global batch.
+7. Use the exact registered E117 route caches. Their metadata checkpoint hash
+   must be
+   `a5b84689d2b29f579d2442da7594ac093292b6386760867a0668ca02f82e6156`.
+8. W&B is required unless offline mode is deliberately selected. Do not create
+   `train.log` or TensorBoard logs.
+9. Save only `latest.pt`, atomically, after every completed data epoch.
+   No step, best, epoch, or final checkpoints.
+10. Never edit packed arrays or route caches and never commit weights, data,
+    generated images, or result directories.
+11. Never signal another user's process. On an abnormality, SIGINT only the
+    owned launcher parent after identifying it.
 
-## Codex operating procedure
+## H200 batch procedure
 
-1. Read `README.md` and `docs/DATA_AND_CHECKPOINTS.md`.
-2. Locate the packed-code path. If absent, locate ImageNet train and run
-   `scripts/launch_extract_h200.sh`; it downloads and verifies tokenizer assets.
-   Never request an old AR checkpoint.
-3. Confirm W&B authentication or deliberately set `WANDB_MODE=offline`.
-4. Confirm persistent `RESULTS_DIR` has enough free space for one model and
-   optimizer checkpoint plus a transactional copy during save.
-5. Run the validation command before launch.
-6. Start `scripts/launch_h200.sh` in a persistent terminal/session.
-7. Record the selected micro/global batch and scaled learning rates from
-   `run_plan.json`.
-8. Monitor W&B loss, both modality losses/accuracies, gradient norm,
-   throughput, eight GPU processes, memory, temperature, and co-tenancy.
-9. On a real abnormality, send SIGINT only to the owned torchrun parent and
-   inspect the last complete `latest`.
-10. After every epoch, run or inspect `scripts/validate_latest.py`; confirm no
-    non-hidden checkpoint sibling exists.
-11. Completion requires `metadata.json` to show `completed_epochs: 150` and
-    the latest checkpoint to pass validation.
+The launcher probes the exact K=128 two-branch train step on one H200. It keeps
+the largest isolated-process candidate below 90% peak reserved memory, then
+launches eight ranks. Do not bypass the probe. With real DDP OOM or co-tenancy,
+stop cleanly and repeat with `H200_MEMORY_FRACTION=0.85`.
 
-## Batch policy
+`run_plan.json` and `resolved_config.yaml` are immutable once a run
+starts. Use a new `EXP_NAME` for a changed experiment.
 
-Default batch selection is an actual forward/backward/AdamW probe capped at 90%
-peak reserved memory. If DDP overhead still causes OOM, stop cleanly and rerun
-with `H200_MEMORY_FRACTION=0.85`. Use a manually fixed
-`MICRO_BATCH_SIZE` only when supported by a successful probe.
+## Monitoring
 
-Changing batch changes the learning rate through the documented square-root
-rule. Do not silently change the rule during a run.
+Monitor W&B total/1D/2D loss, top-1/top-5, both mask ratios, gradient norm, LR,
+throughput, source-equivalent epoch, and fixed-eval context/prefix deltas.
+Also monitor all eight ranks, memory, temperature, and unexpected co-tenancy.
 
-## Checkpoint recovery
+Stop the owned run for NaN/Inf, an unrecoverable OOM after the probe, missing
+ranks, a sustained collective stall, corrupted data, or a persistent regression
+confirmed by fixed evaluation. Do not stop on a noisy single training batch.
 
-Stable state:
+After each completed data epoch, validate:
 
-```text
-checkpoints/latest
+```bash
+python scripts/validate_e117_maskgit_latest.py \
+  "${RESULTS_DIR}/${EXP_NAME}" --expected-world-size 8
 ```
 
-The hidden `.latest-next` and `.latest-previous` directories are
-transactional only. Do not treat them as experiment checkpoints. The trainer's
-recovery helper resolves an interrupted rotation before resume.
+## Missing external artifact
+
+The train and validation E117 route caches are not yet on Hugging Face. If they
+are absent on H200, stop before launch and ask for their transfer/upload. Packed
+codes can be regenerated with the two extraction launchers. Do not silently
+generate routes with another E117 checkpoint.
+
+## Evidence discipline
+
+The step-40k local result is a feasibility result, not final generative quality.
+Follow `docs/MASKGIT_EXPERIMENT_PROTOCOL.md` for final sampling sweeps,
+multi-seed evaluation, 50k FID, throughput, and memory claims.

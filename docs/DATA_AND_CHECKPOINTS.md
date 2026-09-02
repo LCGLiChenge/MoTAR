@@ -2,6 +2,41 @@
 
 Neither the packed ImageNet codes nor checkpoints belong in Git.
 
+## Current E117 MaskGIT handoff
+
+The current MaskGIT trainer requires four directories:
+
+1. full ImageNet train packed TiTok/LlamaGen codes (1,281,167 sources, two
+   augmentations);
+2. ImageNet val packed codes (50,000 sources, one augmentation);
+3. full-train E117 K=64/128 route cache;
+4. validation E117 K=64/128 route cache.
+
+Packed codes can be regenerated using `scripts/launch_extract_h200.sh` and
+`scripts/launch_extract_val_h200.sh`. Exact known manifests are:
+
+```text
+docs/mot199440_packed_manifest.sha256
+docs/mot199440_val_packed_manifest.sha256
+```
+
+The route caches cannot currently be downloaded from Hugging Face. Transfer
+the exact current-server directories listed in `README.md`. Their
+manifests are:
+
+```text
+docs/e117_routes_train_manifest.sha256
+docs/e117_routes_val_manifest.sha256
+```
+
+Both caches must report E117 checkpoint SHA256
+`a5b84689d2b29f579d2442da7594ac093292b6386760867a0668ca02f82e6156`.
+The formal launcher validates this before probing or training.
+
+The 138,821,223-byte E117 checkpoint itself is not needed for training from
+precomputed routes. It is needed only to regenerate routes or perform
+end-to-end generation, and it has not yet been published to Hugging Face.
+
 ## Packed code dataset
 
 Expected files:
@@ -61,7 +96,7 @@ An interrupted run resumes from `written.npy`; completed output includes a new
 This extraction batch is independent of AR training. AR training performs its
 own real forward/backward/AdamW H200 probe and does not use tokenizer weights.
 
-## H200 training state
+## Legacy causal-AR H200 training state
 
 Do not transfer a prior AR model or optimizer checkpoint to this experiment.
 The first H200 launch starts from random initialization and consumes only the

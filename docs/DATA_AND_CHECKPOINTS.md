@@ -20,9 +20,16 @@ docs/mot199440_packed_manifest.sha256
 docs/mot199440_val_packed_manifest.sha256
 ```
 
-The route caches cannot currently be downloaded from Hugging Face. Transfer
-the exact current-server directories listed in `README.md`. Their
-manifests are:
+The exact route caches are published in the Hugging Face model repository
+`Chloeeeeeeee123/MoT-1` under:
+
+```text
+e117_routes_full_train_e116/
+e117_routes_imagenet_val_e116/
+```
+
+Use the immutable revision and `hf download` command in `README.md` rather
+than following the moving `main` branch. Their manifests are:
 
 ```text
 docs/e117_routes_train_manifest.sha256

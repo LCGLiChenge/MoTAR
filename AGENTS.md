@@ -77,12 +77,13 @@ python scripts/validate_e117_maskgit_latest.py \
   "${RESULTS_DIR}/${EXP_NAME}" --expected-world-size 8
 ```
 
-## Missing external artifact
+## External route caches
 
-The train and validation E117 route caches are not yet on Hugging Face. If they
-are absent on H200, stop before launch and ask for their transfer/upload. Packed
-codes can be regenerated with the two extraction launchers. Do not silently
-generate routes with another E117 checkpoint.
+The registered train and validation E117 route caches are published in
+`Chloeeeeeeee123/MoT-1`. Download the pinned revision and verify both
+SHA256 manifests exactly as shown in `README.md` before launch. Packed codes
+can be regenerated with the two extraction launchers. Do not silently generate
+routes with another E117 checkpoint.
 
 ## Evidence discipline
 

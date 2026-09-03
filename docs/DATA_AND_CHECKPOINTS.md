@@ -1,6 +1,8 @@
 # Data and checkpoint handoff
 
-Neither the packed ImageNet codes nor checkpoints belong in Git.
+The immutable 50k ImageNet validation packed-code cache is bundled in Git for
+clean-server training. Full ImageNet train codes and checkpoints do not belong
+in Git.
 
 ## Current E117 MaskGIT handoff
 
@@ -8,12 +10,15 @@ The current MaskGIT trainer requires four directories:
 
 1. full ImageNet train packed TiTok/LlamaGen codes (1,281,167 sources, two
    augmentations);
-2. ImageNet val packed codes (50,000 sources, one augmentation);
+2. bundled ImageNet val packed codes (50,000 sources, one augmentation) at
+   `data/imagenet-val-titok_l32-mot199440ema-none-256_packed`;
 3. full-train E117 K=64/128 route cache;
 4. validation E117 K=64/128 route cache.
 
-Packed codes can be regenerated using `scripts/launch_extract_h200.sh` and
-`scripts/launch_extract_val_h200.sh`. Exact known manifests are:
+The full training codes can be regenerated with
+`scripts/launch_extract_h200.sh`. The bundled validation codes can be
+independently reproduced with `scripts/launch_extract_val_h200.sh`. Exact known
+manifests are:
 
 ```text
 docs/mot199440_packed_manifest.sha256

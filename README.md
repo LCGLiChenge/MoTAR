@@ -45,7 +45,7 @@ are not loaded into the training process.
 | asset | size here | clean-server status |
 | --- | ---: | --- |
 | ImageNet train packed codes, 2 augmentations | about 1.4 GiB | reproducible from ImageNet + Hugging Face |
-| ImageNet val packed codes, 1 augmentation | about 28 MiB | reproducible from ImageNet + Hugging Face |
+| ImageNet val packed codes, 1 augmentation | about 28 MiB | bundled under `data/imagenet-val-titok_l32-mot199440ema-none-256_packed` |
 | full-train E117 route cache | 156 MiB allocated, about 328 MiB logical | [Chloeeeeeeee123/MoT-1](https://huggingface.co/Chloeeeeeeee123/MoT-1/tree/main/e117_routes_full_train_e116) |
 | validation E117 route cache | 3.2 MiB allocated, about 6.8 MiB logical | [Chloeeeeeeee123/MoT-1](https://huggingface.co/Chloeeeeeeee123/MoT-1/tree/main/e117_routes_imagenet_val_e116) |
 | frozen E117 checkpoint | 138,821,223 bytes | not needed with caches; not yet on Hugging Face |
@@ -84,29 +84,37 @@ python -m pip install -r requirements-dev.txt
 wandb login
 ```
 
-### Regenerate packed codes
+### Prepare packed codes
 
-The target host needs ImageNet in ImageFolder layout:
+The validation packed-code cache is included in this repository. Verify it
+immediately after cloning:
+
+```bash
+export MOTAR_ROOT="$(pwd)"
+export EVAL_PACKED_CODE_ROOT="${MOTAR_ROOT}/data/imagenet-val-titok_l32-mot199440ema-none-256_packed"
+(cd "${EVAL_PACKED_CODE_ROOT}" && sha256sum -c manifest.sha256)
+```
+
+The target host needs ImageNet train in ImageFolder layout to regenerate the
+larger training cache:
 
 ```bash
 export ASSET_ROOT=/persistent/assets/motar-extraction
 export IMAGENET_TRAIN=/persistent/datasets/imagenet/train
-export IMAGENET_VAL=/persistent/datasets/imagenet/val
 export PACKED_CODE_ROOT=/persistent/data/imagenet-titok_l32-mot199440ema-adm-256_packed
-export EVAL_PACKED_CODE_ROOT=/persistent/data/imagenet-val-titok_l32-mot199440ema-none-256_packed
 
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 bash scripts/launch_extract_h200.sh
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 bash scripts/launch_extract_val_h200.sh
 ```
 
-Both are resumable through `written.npy`. Extraction runs tokenizer
-inference in FP32 and is separate from generator batch probing.
+Extraction is resumable through `written.npy`, runs tokenizer inference in
+FP32, and is separate from generator batch probing. To independently reproduce
+the bundled validation cache, set `IMAGENET_VAL` and a different
+`EVAL_PACKED_CODE_ROOT`, then run `scripts/launch_extract_val_h200.sh`.
 
-Alternatively copy packed caches, then verify:
+Verify a regenerated or copied training cache with:
 
 ```bash
 (cd "${PACKED_CODE_ROOT}" && sha256sum -c /path/to/MoTAR/docs/mot199440_packed_manifest.sha256)
-(cd "${EVAL_PACKED_CODE_ROOT}" && sha256sum -c /path/to/MoTAR/docs/mot199440_val_packed_manifest.sha256)
 ```
 
 ### Download the E117 routes
@@ -141,8 +149,9 @@ dtypes, and registered checkpoint SHA256 before allocating a GPU.
 ## Start the 8-H200 formal run
 
 ```bash
+export MOTAR_ROOT="$(pwd)"
 export PACKED_CODE_ROOT=/persistent/data/imagenet-titok_l32-mot199440ema-adm-256_packed
-export EVAL_PACKED_CODE_ROOT=/persistent/data/imagenet-val-titok_l32-mot199440ema-none-256_packed
+export EVAL_PACKED_CODE_ROOT="${MOTAR_ROOT}/data/imagenet-val-titok_l32-mot199440ema-none-256_packed"
 export E117_ROUTE_CACHE=/persistent/data/motar-e117-routes/e117_routes_full_train_e116
 export E117_EVAL_ROUTE_CACHE=/persistent/data/motar-e117-routes/e117_routes_imagenet_val_e116
 export RESULTS_DIR=/persistent/results/motar

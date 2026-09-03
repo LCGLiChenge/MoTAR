@@ -1,0 +1,36 @@
+{
+  "format_version": 1,
+  "completed": true,
+  "written_samples": 50000,
+  "num_samples": 50000,
+  "num_aug": 1,
+  "titok_width": 32,
+  "titok_vocab_size": 4096,
+  "llamagen_width": 256,
+  "llamagen_vocab_size": 16384,
+  "dtype": "uint16",
+  "data_path": "/home/heyefei/ImageNet/validation",
+  "image_size": 256,
+  "augmentation": "none",
+  "preprocessing": {
+    "crop": "RandAR center_crop_arr",
+    "titok_range": "zero_1",
+    "llamagen_range": "minus1_1"
+  },
+  "titok_config": "/home/heyefei/lichenge/1d-tokenizer/configs/infer/TiTok/titok_l32.yaml",
+  "titok_ckpt": "/home/heyefei/lichenge/1d-tokenizer/tokenizer_titok_l32.bin",
+  "llamagen_base_ckpt": "/home/heyefei/lichenge/LlamaGen/pretrained_models/vq_ds16_c2i.pt",
+  "mot_ckpt": "/home/heyefei/lichenge/MoT/weights/sophiaa_root_latest/latest.pt",
+  "mot_state_key": "model_ema",
+  "mot_step": 199440,
+  "mot_mask_ratio": 0.375,
+  "mot_router_min_tokens": 96,
+  "mot_router_max_tokens": 96,
+  "llamagen_loaded_keys": 343,
+  "llamagen_retained_base_buffers": [
+    "quantize.codebook_used"
+  ],
+  "extraction_precision": "none",
+  "world_size": 4,
+  "updated_at_utc": "2026-08-28T23:41:57.465077+00:00"
+}

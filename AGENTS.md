@@ -16,7 +16,7 @@ Read `README.md` and `docs/DATA_AND_CHECKPOINTS.md` first. Then use:
 
 ```bash
 PACKED_CODE_ROOT=/persistent/data/train-codes \
-EVAL_PACKED_CODE_ROOT=/persistent/data/val-codes \
+EVAL_PACKED_CODE_ROOT="$PWD/data/imagenet-val-titok_l32-mot199440ema-none-256_packed" \
 E117_ROUTE_CACHE=/persistent/data/train-e117-routes \
 E117_EVAL_ROUTE_CACHE=/persistent/data/val-e117-routes \
 RESULTS_DIR=/persistent/results/motar \
@@ -45,8 +45,9 @@ bash scripts/launch_e117_maskgit_h200.sh
    `train.log` or TensorBoard logs.
 9. Save only `latest.pt`, atomically, after every completed data epoch.
    No step, best, epoch, or final checkpoints.
-10. Never edit packed arrays or route caches and never commit weights, data,
-    generated images, or result directories.
+10. Never edit packed arrays or route caches and never commit weights, train
+    data, generated images, or result directories. The immutable validation
+    cache already tracked under `data/` is the sole data exception.
 11. Never signal another user's process. On an abnormality, SIGINT only the
     owned launcher parent after identifying it.
 

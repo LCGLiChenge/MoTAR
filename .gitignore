@@ -19,3 +19,14 @@ checkpoints/
 *.safetensors
 *.npy
 *.npz
+
+# Immutable 50k ImageNet validation code cache bundled for clean-server runs.
+!data/
+data/*
+!data/imagenet-val-titok_l32-mot199440ema-none-256_packed/
+!data/imagenet-val-titok_l32-mot199440ema-none-256_packed/meta.json
+!data/imagenet-val-titok_l32-mot199440ema-none-256_packed/manifest.sha256
+!data/imagenet-val-titok_l32-mot199440ema-none-256_packed/labels.npy
+!data/imagenet-val-titok_l32-mot199440ema-none-256_packed/llamagen_codes.npy
+!data/imagenet-val-titok_l32-mot199440ema-none-256_packed/titok_codes.npy
+!data/imagenet-val-titok_l32-mot199440ema-none-256_packed/written.npy

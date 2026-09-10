@@ -1,242 +1,152 @@
-# MoTAR: E117-routed unified MaskGIT
+# MoTAR: TiTok-BERT unified MaskGIT — H20 handoff
 
-This repository contains the formal scratch-training handoff for one shared
-bidirectional generator:
+**当前入口是 `scripts/launch_titok_bert_h20.sh`，不是旧 H200 scratch launcher。**
+本版本移植的是 2026-09-10 已通过检查的 TiTok-BERT 方案：官方 TiTok-L32
+MaskGIT 初始化，共享 24 层、width 768、16 heads 的 BERT；class → 32 个 1D token；
+冻结 E117 从完整 1D 决定 K=64/128；class + 1D + 坐标 → 稀疏 2D token。
+1D forward 不接收 2D。训练阶段的 2D 条件仍然是真实 1D code，**尚未改成生成前缀训练**。
 
-- stage 1: class -> 32 TiTok-L32 1D codes (vocabulary 4096);
-- frozen E117: completed 1D codes -> a deterministic K=64 or K=128 route;
-- stage 2: class + completed 1D codes + routed coordinates -> sparse
-  MoT/LlamaGen VQ-16 2D codes (vocabulary 16384).
+旧的从零训练 pre-norm LLaMA 版本见 [旧版说明](docs/LEGACY_SCRATCH_MASKGIT.md)，
+旧 causal AR 见 [历史 AR](docs/LEGACY_CAUSAL_AR.md)。不要混用权重或命令。
 
-The stages share a 24-layer, width-768 pre-norm LLaMA transformer and have
-separate input/output vocabularies. Training uses TiTok's arccos mask schedule,
-0.1 label smoothing, 0.1 visible-token loss weight, class dropout, AdamW
-(betas 0.9/0.96, weight decay 0.03), full-model EMA, 1.5x 1D loss, and 1.0x 2D
-loss. Attention is explicitly bidirectional: this is MaskGIT, not causal AR.
+## 1. 新服务器安装环境
 
-The H200 run starts the generator from random initialization. Do not copy the
-RTX 5090 generator checkpoint. A checkpoint later created by this same H200 run
-may be resumed automatically.
-
-The previous 150-epoch causal-AR handoff remains in
-[docs/LEGACY_CAUSAL_AR.md](docs/LEGACY_CAUSAL_AR.md). It is not the launch
-command for this experiment.
-
-## Current evidence
-
-The identical model/configuration was run from scratch on four RTX 5090s with
-global batch 128:
-
-| step | 1D CE | 2D CE | global 1D context delta | global 1D label delta | 2D context delta | 2D 1D-prefix delta |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 0 | 8.471 | 9.857 | baseline | baseline | baseline | baseline |
-| 30k | 8.151 | 9.488 | 0.00149 | 0.00031 | 0.20173 | 0.01943 |
-| 40k | 8.104 | 9.318 | 0.01003 | 0.00197 | 0.28661 | 0.11895 |
-
-At 40k every preregistered feasibility check passed for the first time. This
-shows that both branches and cross-stage conditioning learn; it is not a
-generation-FID claim. Final claims still require multi-seed 50k-sample eval.
-
-## Required assets
-
-Training reads only discrete codes and E117 routes. Tokenizer and E117 weights
-are not loaded into the training process.
-
-| asset | size here | clean-server status |
-| --- | ---: | --- |
-| ImageNet train packed codes, 2 augmentations | about 1.4 GiB | reproducible from ImageNet + Hugging Face |
-| ImageNet val packed codes, 1 augmentation | about 28 MiB | bundled under `data/imagenet-val-titok_l32-mot199440ema-none-256_packed` |
-| full-train E117 route cache | 156 MiB allocated, about 328 MiB logical | [Chloeeeeeeee123/MoT-1](https://huggingface.co/Chloeeeeeeee123/MoT-1/tree/main/e117_routes_full_train_e116) |
-| validation E117 route cache | 3.2 MiB allocated, about 6.8 MiB logical | [Chloeeeeeeee123/MoT-1](https://huggingface.co/Chloeeeeeeee123/MoT-1/tree/main/e117_routes_imagenet_val_e116) |
-| frozen E117 checkpoint | 138,821,223 bytes | not needed with caches; not yet on Hugging Face |
-
-Registered E117 checkpoint SHA256:
-
-```text
-a5b84689d2b29f579d2442da7594ac093292b6386760867a0668ca02f82e6156
-```
-
-Route metadata embeds this hash, and validation rejects another checkpoint.
-
-Packed-code extraction downloads and verifies:
-
-- `sophiaa/MoT-1-checkpoints/latest.pt`, revision
-  `0ed66fb6f5f3edc79205fab87c39139772caab4d`, 6,400,628,829 bytes,
-  SHA256 `86c8f9da5e61261ab93066c73d7719203e8c00b69f05b805c5937e6b7319b446`;
-- `fun-research/TiTok/tokenizer_titok_l32.bin`, revision
-  `ab646ed225080a3acb7c78440a574d7f67f16fa7`, 2,564,477,610 bytes,
-  SHA256 `b8f0bf61e9ee1791d8b76fa723bdcb2c85a039a7d027e597f685db492935c31f`;
-- pinned TiTok and LlamaGen source commits.
-
-The MoT checkpoint has all adapted LlamaGen VQ parameters, but not the TiTok
-encoder/codebook. TiTok's tokenizer file is therefore needed for extraction.
-The original `vq_ds16_c2i.pt` is not needed.
-
-## Clean H200 setup
-
-Use an H200-compatible PyTorch installation:
+要求：Linux x86_64、Conda/Miniforge（或 Python 3.10 venv）、git，以及能够运行
+CUDA 12.8 PyTorch 的 NVIDIA 驱动。建议至少 80 GB 可用磁盘、64 GB 主机内存。
+脚本不会修改系统驱动，也不会把旧服务器的账号配置复制过来。
 
 ```bash
 git clone https://github.com/LCGLiChenge/MoTAR.git
 cd MoTAR
-python -m pip install -r requirements.txt
-python -m pip install -r requirements-dev.txt
+bash scripts/install_h20_environment.sh
+conda activate motar-h20
 wandb login
 ```
 
-### Prepare packed codes
+已有独立 Python 3.10 环境时：`bash scripts/install_h20_environment.sh --active-env`。
+不要在别的正在使用的环境中覆盖安装。
+非交互执行时可以在每条 Python/启动命令前加
+`conda run --no-capture-output -n motar-h20`，不依赖前一个 shell 的激活状态。
 
-The validation packed-code cache is included in this repository. Verify it
-immediately after cloning:
+环境文件都在 GitHub：`environment-h20.yml`、`requirements-h20.txt`、
+`constraints-h20.txt`。核心是 PyTorch 2.10.0 / torchvision 0.25.0 / CUDA 12.8，
+Transformers 固定到 `a957b7911a758d54597914b4479fe6e81424d64f`，不是随便安装最新版。
+安装方法对应 [PyTorch 官方版本说明](https://pytorch.org/get-started/previous-versions/)。
+这是可重建环境，不是包含私人账号和无关包的原机器环境镜像。
+
+## 2. 下载资产：不需要再从 ImageNet 提取 code
+
+所有下载地址、不可变 revision、文件大小和 SHA256 以
+[`configs/h20_assets.json`](configs/h20_assets.json) 为准。
 
 ```bash
-export MOTAR_ROOT="$(pwd)"
-export EVAL_PACKED_CODE_ROOT="${MOTAR_ROOT}/data/imagenet-val-titok_l32-mot199440ema-none-256_packed"
-(cd "${EVAL_PACKED_CODE_ROOT}" && sha256sum -c manifest.sha256)
+export MOTAR_ASSETS="$PWD/assets/h20"
+python -m h20.assets --root "$MOTAR_ASSETS" --profile resume
 ```
 
-The target host needs ImageNet train in ImageFolder layout to regenerate the
-larger training cache:
+`resume` 下载完整训练数据和当前完整续训状态（约 5.8 GB）；`train` 只下载从官方
+TiTok 初始化所需内容（约 2.6 GB）；`all` 额外下载 decoder、tokenizer、E117
+权重，资产合计约 14.9 GB。Hugging Face 缓存和本地资产副本可能额外占用一份空间。
+重复执行会先检查已有文件，不覆盖哈希不符的文件。
+如果网络环境导致 Xet 下载停滞，可在命令前加 `HF_HUB_DISABLE_XET=1` 使用普通下载通道。
+两个最大的文件以 `.parts/` 传输块存放，下载脚本逐块校验后自动拼接，再验证完整
+文件 SHA256。它们不是模型格式转换，不需要手工拼接；训练仍读取普通完整文件。
+
+| 资产 | Hugging Face 位置 | 用途 |
+|---|---|---|
+| 全量 train codes、完整 val codes | `Chloeeeeeeee123/MoT-1/h20-titok-bert-20260910/codes/` | 训练/固定验证，无原图依赖 |
+| train/val E117 routes | 同仓库 `e117_routes_full_train_e116/`、`e117_routes_imagenet_val_e116/` | 冻结路由 |
+| step 10938 完整 checkpoint | 同仓库 `h20-titok-bert-20260910/resume/` | raw、EMA、AdamW、RNG、进度 |
+| E117 checkpoint | 同仓库 `h20-titok-bert-20260910/router/e117.pt` | 未来生成时的路由，训练不加载 |
+| 官方 generator | `fun-research/TiTok/generator_titok_l32.bin` | 官方 1D 初始化 |
+| 官方 TiTok tokenizer | `fun-research/TiTok/tokenizer_titok_l32.bin` | 提取/解码控制组，训练不加载 |
+| MoT decoder EMA step 199440 | `sophiaa/MoT-1-checkpoints/latest.pt` | 图像重建/生成解码，训练不加载 |
+
+Hugging Face 新资产目录：
+https://huggingface.co/Chloeeeeeeee123/MoT-1/tree/main/h20-titok-bert-20260910
+
+没有上传 ImageNet 原图或任何登录凭据。仅训练 unified MaskGIT 时不需要本地
+ImageNet 原图、旧服务器目录、旧结果 manifest 或未发布的 Router 文件。
+本仓库包含训练需要的最小 RandAR/TiTok 源文件和许可证。
+
+## 3. 让 Codex 检查并开始训练
+
+先明确指定获准使用的卡；支持 1、2、4、8 卡，不会自动占用服务器全部 GPU。
+下面以四卡为例，八卡时显式改为 `0,1,2,3,4,5,6,7`。
 
 ```bash
-export ASSET_ROOT=/persistent/assets/motar-extraction
-export IMAGENET_TRAIN=/persistent/datasets/imagenet/train
-export PACKED_CODE_ROOT=/persistent/data/imagenet-titok_l32-mot199440ema-adm-256_packed
-
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 bash scripts/launch_extract_h200.sh
-```
-
-Extraction is resumable through `written.npy`, runs tokenizer inference in
-FP32, and is separate from generator batch probing. To independently reproduce
-the bundled validation cache, set `IMAGENET_VAL` and a different
-`EVAL_PACKED_CODE_ROOT`, then run `scripts/launch_extract_val_h200.sh`.
-
-Verify a regenerated or copied training cache with:
-
-```bash
-(cd "${PACKED_CODE_ROOT}" && sha256sum -c /path/to/MoTAR/docs/mot199440_packed_manifest.sha256)
-```
-
-### Download the E117 routes
-
-Download both registered route caches from Hugging Face at the pinned immutable
-revision. Run this from the MoTAR repository root:
-
-```bash
-export MOTAR_ROOT="$(pwd)"
-export E117_ROUTE_REPO=Chloeeeeeeee123/MoT-1
-export E117_ROUTE_REVISION=d56464b7ff07eae78ec51def8a65d7e887d4603e
-export E117_ROUTE_ROOT=/persistent/data/motar-e117-routes
-
-hf download "${E117_ROUTE_REPO}" \
-  --repo-type model \
-  --revision "${E117_ROUTE_REVISION}" \
-  --include 'e117_routes_full_train_e116/*' \
-            'e117_routes_imagenet_val_e116/*' \
-  --local-dir "${E117_ROUTE_ROOT}"
-
-export E117_ROUTE_CACHE="${E117_ROUTE_ROOT}/e117_routes_full_train_e116"
-export E117_EVAL_ROUTE_CACHE="${E117_ROUTE_ROOT}/e117_routes_imagenet_val_e116"
-
-(cd "${E117_ROUTE_CACHE}" && sha256sum -c "${MOTAR_ROOT}/docs/e117_routes_train_manifest.sha256")
-(cd "${E117_EVAL_ROUTE_CACHE}" && sha256sum -c "${MOTAR_ROOT}/docs/e117_routes_val_manifest.sha256")
-```
-
-Do not replace these caches with routes generated by a different E117
-checkpoint. The launcher also checks their metadata, completeness, shapes,
-dtypes, and registered checkpoint SHA256 before allocating a GPU.
-
-## Start the 8-H200 formal run
-
-```bash
-export MOTAR_ROOT="$(pwd)"
-export PACKED_CODE_ROOT=/persistent/data/imagenet-titok_l32-mot199440ema-adm-256_packed
-export EVAL_PACKED_CODE_ROOT="${MOTAR_ROOT}/data/imagenet-val-titok_l32-mot199440ema-none-256_packed"
-export E117_ROUTE_CACHE=/persistent/data/motar-e117-routes/e117_routes_full_train_e116
-export E117_EVAL_ROUTE_CACHE=/persistent/data/motar-e117-routes/e117_routes_imagenet_val_e116
-export RESULTS_DIR=/persistent/results/motar
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+export MOTAR_OUTPUT="$PWD/results/titok-bert-h20-seed0"
 export WANDB_PROJECT=motar-maskgit
-export WANDB_ENTITY=your-wandb-entity
+# 如需团队 workspace，设置你有写权限的 entity；否则使用当前登录账户。
+# export WANDB_ENTITY=your-team
 
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
-bash scripts/launch_e117_maskgit_h200.sh
+python -m h20.preflight --assets "$MOTAR_ASSETS"
+bash scripts/launch_titok_bert_h20.sh --init resume --steps 50000
 ```
 
-The launcher requires exactly eight H200s with bf16 support, both complete
-packed datasets, both exact route caches, and W&B authentication. Set
-`WANDB_MODE=offline` only deliberately. No `train.log` or
-TensorBoard file is created.
+默认恢复发布的 step 10938，目标是**总计 50,000 optimizer steps**，不是再跑
+50,000 steps。global batch 固定 2048，累计约 79.93 个源图像等效 epoch；
+这不是旧 scratch 版本的约 800 epoch 预算。若决定更长训练，显式设置 `--steps`。
 
-## H200 memory policy
-
-The batch is not guessed. One H200 first runs the exact worst-case K=128 bf16
-workload: full 1D and sparse 2D forwards, combined backward, gradient clipping,
-fused AdamW, and resident fp32 EMA. Candidates from 768 down to 8 per GPU run
-in isolated processes. The largest below 90% peak reserved memory is saved in:
-
-```text
-${RESULTS_DIR}/${EXP_NAME}/h200_micro_batch_size.txt
-```
-
-This leaves DDP/NCCL margin. With co-tenancy:
+从官方 TiTok 重新开始时，使用一个新的输出目录：
 
 ```bash
-H200_MEMORY_FRACTION=0.85 bash scripts/launch_e117_maskgit_h200.sh
+export MOTAR_OUTPUT="$PWD/results/titok-bert-h20-official-seed0"
+bash scripts/launch_titok_bert_h20.sh --init official --steps 50000
 ```
 
-A manual `MICRO_BATCH_SIZE` is still subjected to the real probe.
+“official”不是整个模型随机初始化：官方 1D/BERT 参数加载 TiTok，新增 2D
+embedding/head 随机初始化。前 600 步只更新新增 2D 参数，之后共享主干和 1D
+参数也参与更新。新 2D LR=1e-4，预训练参数 LR=1e-5；1D/2D loss 权重=1.5/1；
+AdamW betas=(0.9,0.96)、weight decay=0.03、EMA=0.999、bf16、TF32 off；
+arccos masking、label smoothing=0.1、visible-token weight=0.1，per-sample reduction。
 
-## Budget, W&B, and checkpoints
+只检查配置不启动：在启动命令后添加 `--plan-only`。
+短测试（单独目录，不是正式训练）：添加 `--smoke --max-micro 2`。
 
-The formal budget matches TiTok by image exposure:
+## 4. H20 显存与恢复语义
 
-```text
-500,000 reference steps * global batch 2,048 = 1,024,000,000 examples
-```
+启动器首先在选中卡中显存最小的一张上运行真实 K=128 双阶段前向/反向、AdamW、EMA，
+从大到小测试能整除 global batch 的 microbatch，默认峰值 reserved 不超过 92%。
+选择结果写入 `capacity/` 和 `run_plan.json`，自动用梯度累积保持 global batch 2048。
+实际 DDP 仍可能因外部占用等因素 OOM；遇到非有限值或 OOM 会报错，不会静默缩
+batch、跳过训练样本或继续错误训练。请使用新的输出目录和较小 `--max-micro` 重试。
 
-After selecting batch, the launcher rounds `max_steps` to the nearest
-optimizer step, keeps warmup at 2%, and records the at-most-half-step exposure
-error in `run_plan.json`. LR stays `1e-4` rather than being silently
-batch-scaled. This is about 799 ImageNet-source-equivalent epochs. A completed
-data epoch is one traversal of the two-augmentation route cache. The old
-150-epoch target applies only to causal AR.
+八卡时 microbatch 上限为 256；即使仍有显存，也不会为了填满显存擅自增大
+有效 batch。不能把在 RTX 5090 上的显存结果冒充 H20 实测。
 
-W&B records total/1D/2D loss, top-1/top-5, mask ratios, gradient norm, LR,
-throughput, source-equivalent epoch, and fixed-eval metrics.
-`wandb_run_id.txt` preserves the run identity across native resumes.
+恢复一定读取 raw、EMA 和完整 AdamW，不是只加载 EMA。当卡数/microbatch/累积
+布局相同时恢复保存的 RNG 和数据游标；布局改变则保留参数、优化器和全局步数，
+从下一个确定性 packed pass 开始并重新设各 rank RNG，写明为非逐步一致的迁移。
+跨 GPU 架构/内核也不承诺 bitwise 相同。
 
-Only one stable checkpoint exists:
+同一 H20 run 再启动相同命令，会使用该输出目录的 latest，继续原 W&B run。
+更换布局用新输出目录和 `--resume /path/to/previous/run`。不要修改源 checkpoint。
 
-```text
-${RESULTS_DIR}/${EXP_NAME}/latest.pt
-```
+## 5. 记录和保存
 
-It includes model, fp32 EMA, AdamW, scheduler, eight-rank RNG states, config
-digest, step, and completed data epoch. `latest.pt.tmp` is used only for
-atomic replacement. No step/best/final checkpoint is created.
+W&B online 必须启用；记录 1D/2D loss、masked NLL、LR、梯度范数、显存、吞吐、
+源图像等效 epoch，以及固定 1024 张验证图像的 raw/EMA masked NLL。
+这是 development 指标，不是生成 FID。不会创建 `log.txt` 或 TensorBoard 日志。
+
+每跨过一个源图像等效 epoch 更新一次 `latest.safetensors` + `latest.json`，
+结束或正常信号停止时也保存；不额外保存 step/best/final 权重。
+保留 raw、EMA、AdamW、每 rank RNG、数据游标、配置和 SHA256，写入后逐张量检查。
+至少保留 10 GiB 空闲磁盘用于原子写入。没有本机 pilot 的三小时自动停止限制，
+也不再按单一 NLL 阈值自动停止。对故障运行先检查原因，不要盲目重启。
+
+## 验收与证据
 
 ```bash
-python scripts/validate_e117_maskgit_latest.py \
-  "${RESULTS_DIR}/${EXP_NAME}" --expected-world-size 8
+python -m unittest h20.test_model h20.test_portability -v
+bash -n scripts/install_h20_environment.sh scripts/launch_titok_bert_h20.sh
 ```
 
-## Tests
-
-These checks do not start formal training:
-
-```bash
-bash -n scripts/launch_e117_maskgit_h200.sh scripts/launch_extract_val_h200.sh
-python -m py_compile e117_sparse_*.py train_e117_sparse_maskgit.py scripts/*.py
-pytest -q
-```
-
-The real capacity probe must run on H200; a local GPU cannot establish H200
-capacity.
-
-## Publication protocol
-
-The 40k result only authorizes continued training. Publication claims require
-frozen independent seeds, identical splits/decoder/evaluator, 50k generated
-images per method, FID uncertainty, throughput/peak-memory reporting, and
-disclosure of the selected H200 batch. See
-[docs/MASKGIT_EXPERIMENT_PROTOCOL.md](docs/MASKGIT_EXPERIMENT_PROTOCOL.md).
+已完成的本地核验见 [交付测试报告](docs/H20_HANDOFF_VALIDATION.md)。
+包括四卡从官方初始化 smoke，以及从真实 step10938 checkpoint 完整恢复并更新一步。
+尚未接入你的 H20，因此 H20 容量和目标机器全新安装应由上述脚本现场验证。
+当前生成方案仍是实验方案，rFID 良好不等于生成 2D 已学好：
+[decoder rFID](docs/RFID_DECODER_20260910.md)、
+[官方生成器对照](docs/OFFICIAL_COMPARE_20260910.md)。这些历史报告里的本机路径仅作
+原实验记录，不是本 handoff 的运行依赖。

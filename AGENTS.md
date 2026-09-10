@@ -1,93 +1,53 @@
-# AGENTS.md
+# Codex handoff — current TiTok-BERT unified MaskGIT on H20
 
-## Current objective
+Read README.md completely, then configs/h20_assets.json and
+docs/H20_HANDOFF_VALIDATION.md. The current authoritative launcher is
+scripts/launch_titok_bert_h20.sh. Older H200/LLaMA scratch and causal AR launchers
+are historical and must not be substituted.
 
-Run the E117-routed unified TiTok-L32 1D + MoT/LlamaGen VQ-16 sparse-2D
-MaskGIT experiment from random initialization on exactly eight NVIDIA H200s.
-The formal budget is 1,024,000,000 examples, matching TiTok's 500k-step,
-global-batch-2048 generator training.
+## Start-up
 
-Do not substitute the older 150-epoch causal-AR launcher. Its documentation is
-kept only in `docs/LEGACY_CAUSAL_AR.md`.
+1. Check the user's GPU allocation; set CUDA_VISIBLE_DEVICES explicitly.
+   Supported world sizes are 1, 2, 4, 8. Never claim unallocated GPUs.
+2. Create a separate environment with scripts/install_h20_environment.sh,
+   or --active-env in a dedicated Python 3.10 environment. Do not alter system drivers.
+   For separate shell calls, prefix commands with
+   `conda run --no-capture-output -n motar-h20`; do not rely on prior-shell activation.
+3. Set MOTAR_ASSETS, download with `python -m h20.assets --root "$MOTAR_ASSETS" --profile resume`.
+   Use --profile all if decoder/tokenizer/E117 weights are also wanted.
+4. Authenticate W&B interactively; never write credentials into files or commits.
+5. Run `python -m h20.preflight --assets "$MOTAR_ASSETS"`.
+6. Set a fresh MOTAR_OUTPUT and launch with `--init resume --steps 50000` unless
+   the user explicitly chooses official initialization. Re-running an existing
+   run resumes that output's own latest. Changed layout requires a new output.
 
-## Authoritative launch
+The published checkpoint is step10938, global batch2048, warmup600, micro128,
+four ranks, accumulation4. The model is initialized from the official TiTok
+generator, NOT from the old random LLaMA checkpoint. Keep the current clean-1D
+prefix objective, shared BERT, LR groups and EMA unchanged during migration.
+The initial total target is 50000 steps, not 50000 additional steps or the
+legacy 800-epoch budget. Longer budgets must be explicitly selected.
 
-Read `README.md` and `docs/DATA_AND_CHECKPOINTS.md` first. Then use:
+## Memory and safety
 
-```bash
-PACKED_CODE_ROOT=/persistent/data/train-codes \
-EVAL_PACKED_CODE_ROOT="$PWD/data/imagenet-val-titok_l32-mot199440ema-none-256_packed" \
-E117_ROUTE_CACHE=/persistent/data/train-e117-routes \
-E117_EVAL_ROUTE_CACHE=/persistent/data/val-e117-routes \
-RESULTS_DIR=/persistent/results/motar \
-WANDB_PROJECT=motar-maskgit \
-WANDB_ENTITY=your-entity \
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
-bash scripts/launch_e117_maskgit_h200.sh
-```
+Always run the real microbatch probe; preserve effective global batch2048 via
+accumulation. The default reserved-memory ceiling is92%, and eight GPUs cap
+microbatch at256. Do not increase global batch just to fill memory.
+Do not bypass failed hash, data, version or device checks. No NaN/OOM retries
+that skip a batch or silently change the experiment. Never kill another job.
+No long local training is part of packaging/testing. SIGINT/SIGTERM of an
+owned run is handled at optimizer boundaries with latest saving.
 
-## Invariants
+## Evidence and checkpoints
 
-1. Formal training uses exactly eight H200 processes and bf16.
-2. Model is 24 layers, width 768, pre-norm, explicitly bidirectional.
-3. Start the generator from scratch; never import an RTX 5090/AR/RandAR
-   generator checkpoint. Native resume may use only this run's `latest.pt`.
-4. Keep TiTok arccos masking, label smoothing 0.1, visible-token weight 0.1,
-   class dropout 0.1, loss weights 1D=1.5 and 2D=1.0.
-5. Keep AdamW LR 1e-4, betas 0.9/0.96, weight decay 0.03, and full-model EMA
-   0.999. The launcher adjusts only batch-dependent step counts.
-6. Preserve 1,024,000,000 target exposures. Rounding error may be at most half
-   one selected global batch.
-7. Use the exact registered E117 route caches. Their metadata checkpoint hash
-   must be
-   `a5b84689d2b29f579d2442da7594ac093292b6386760867a0668ca02f82e6156`.
-8. W&B is required unless offline mode is deliberately selected. Do not create
-   `train.log` or TensorBoard logs.
-9. Save only `latest.pt`, atomically, after every completed data epoch.
-   No step, best, epoch, or final checkpoints.
-10. Never edit packed arrays or route caches and never commit weights, train
-    data, generated images, or result directories. The immutable validation
-    cache already tracked under `data/` is the sole data exception.
-11. Never signal another user's process. On an abnormality, SIGINT only the
-    owned launcher parent after identifying it.
+W&B online required. No log.txt/TensorBoard. Only latest.safetensors and its
+latest.json metadata; save per source-equivalent epoch and on normal finish.
+Do not edit source checkpoints or caches. Preserve at least10GiB free disk.
+Resume restores raw/EMA/AdamW, not only EMA. Changed DDP layout starts the next
+packed pass with new rank RNG; disclose non-bitwise migration. Even unchanged
+layout cannot promise bitwise identical updates on a different GPU architecture.
 
-## H200 batch procedure
-
-The launcher probes the exact K=128 two-branch train step on one H200. It keeps
-the largest isolated-process candidate below 90% peak reserved memory, then
-launches eight ranks. Do not bypass the probe. With real DDP OOM or co-tenancy,
-stop cleanly and repeat with `H200_MEMORY_FRACTION=0.85`.
-
-`run_plan.json` and `resolved_config.yaml` are immutable once a run
-starts. Use a new `EXP_NAME` for a changed experiment.
-
-## Monitoring
-
-Monitor W&B total/1D/2D loss, top-1/top-5, both mask ratios, gradient norm, LR,
-throughput, source-equivalent epoch, and fixed-eval context/prefix deltas.
-Also monitor all eight ranks, memory, temperature, and unexpected co-tenancy.
-
-Stop the owned run for NaN/Inf, an unrecoverable OOM after the probe, missing
-ranks, a sustained collective stall, corrupted data, or a persistent regression
-confirmed by fixed evaluation. Do not stop on a noisy single training batch.
-
-After each completed data epoch, validate:
-
-```bash
-python scripts/validate_e117_maskgit_latest.py \
-  "${RESULTS_DIR}/${EXP_NAME}" --expected-world-size 8
-```
-
-## External route caches
-
-The registered train and validation E117 route caches are published in
-`Chloeeeeeeee123/MoT-1`. Download the pinned revision and verify both
-SHA256 manifests exactly as shown in `README.md` before launch. Packed codes
-can be regenerated with the two extraction launchers. Do not silently generate
-routes with another E117 checkpoint.
-
-## Evidence discipline
-
-The step-40k local result is a feasibility result, not final generative quality.
-Follow `docs/MASKGIT_EXPERIMENT_PROTOCOL.md` for final sampling sweeps,
-multi-seed evaluation, 50k FID, throughput, and memory claims.
+No ImageNet raw images are needed for training. All training data, route caches
+and checkpoints are published/pinned in configs/h20_assets.json. Do not infer
+an old server path in metadata is a dependency. Real-image reconstruction FID
+is not generation FID, and a successful smoke is not a quality claim.

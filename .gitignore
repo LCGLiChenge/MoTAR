@@ -30,3 +30,6 @@ data/*
 !data/imagenet-val-titok_l32-mot199440ema-none-256_packed/llamagen_codes.npy
 !data/imagenet-val-titok_l32-mot199440ema-none-256_packed/titok_codes.npy
 !data/imagenet-val-titok_l32-mot199440ema-none-256_packed/written.npy
+assets/
+.pip-check/
+.test-env/

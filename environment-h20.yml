@@ -1,0 +1,8 @@
+name: motar-h20
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10.14
+  - pip=25.0.1
+# After conda env create -f environment-h20.yml, activate it and run
+# bash scripts/install_h20_environment.sh --active-env

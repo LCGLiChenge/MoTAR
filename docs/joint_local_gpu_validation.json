@@ -1,0 +1,63 @@
+{
+  "fraction": 0.29524432402130246,
+  "frozen": {
+    "codebook_show_usage": false,
+    "identities": {
+      "router/e117.pt": "a5b84689d2b29f579d2442da7594ac093292b6386760867a0668ca02f82e6156",
+      "weights/mot_latest.pt": "86c8f9da5e61261ab93066c73d7719203e8c00b69f05b805c5937e6b7319b446",
+      "weights/tokenizer_titok_l32.bin": "b8f0bf61e9ee1791d8b76fa723bdcb2c85a039a7d027e597f685db492935c31f"
+    },
+    "mot_tensors_exact": 661,
+    "native_tensors_exact": 692,
+    "original_llamagen_checkpoint_used": false,
+    "router_tensors": 387
+  },
+  "full_checkpoint_tested": false,
+  "fusion_micro": 1,
+  "hardware": "NVIDIA GeForce RTX 5090",
+  "initialization": {
+    "attention_implementation": "sdpa",
+    "fusion_initial_alpha": 0.5,
+    "initialization": "official_TiTok_plus_new_2d_spatial_fusion",
+    "loaded_target_parameters": 177202432,
+    "loaded_target_tensors": 393,
+    "local_pilot_resumed": false,
+    "memory": "local",
+    "new_spatial_tensors": [
+      "spatial_projection.weight"
+    ],
+    "new_target_parameters": 25382656,
+    "new_target_tensors": [
+      "budget_embedding.weight",
+      "embedding_2d.weight",
+      "output_2d.bias",
+      "output_2d.weight",
+      "pos_embedding_2d.weight"
+    ],
+    "source_tensors": 391,
+    "total_parameters": 202585088,
+    "type1_note": "source row is unused by upstream 1D; not pretrained for 2D"
+  },
+  "memory": "local",
+  "micro": 1,
+  "peak_reserved_gib": 9.2578125,
+  "seconds": 1.97903273999691,
+  "status": "pass",
+  "total_gib": 31.3564453125,
+  "updates": [
+    {
+      "ce": 24.4815673828125,
+      "half_mse": 0.022604912519454956,
+      "image_mse": 0.022604912519454956,
+      "mean_alpha": 0.5,
+      "step": 1
+    },
+    {
+      "ce": 23.487056732177734,
+      "half_mse": 0.02301901951432228,
+      "image_mse": 0.022887375205755234,
+      "mean_alpha": 0.49706369638442993,
+      "step": 2
+    }
+  ]
+}

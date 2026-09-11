@@ -64,11 +64,11 @@ def materialize(spec, destination, fetch):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True)
-    parser.add_argument('--profile', choices=['train','resume','all'], default='train')
+    parser.add_argument('--profile', choices=['train','resume','joint','all'], default='train')
     parser.add_argument('--verify-only', action='store_true')
     args = parser.parse_args()
     profiles = ['train'] + (['resume'] if args.profile in ['resume','all'] else [])
-    if args.profile == 'all': profiles.append('inference')
+    if args.profile in ('joint','all'): profiles.append('inference')
     if not args.verify_only:
         from huggingface_hub import hf_hub_download
         for spec in specifications():

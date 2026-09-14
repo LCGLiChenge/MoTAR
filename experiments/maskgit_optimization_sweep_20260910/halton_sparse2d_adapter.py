@@ -401,6 +401,7 @@ def load_halton_base_state(
             "feature_memory_position.",
             "feature_cross_attn.",
             "feature_cross_out.",
+            "one_d_context_",
             "base_context_token",
         ))
     }

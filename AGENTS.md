@@ -1,3 +1,37 @@
+# Latest handoff override — BERT sparse 2D-only, 40 epochs (2026-09-15)
+
+This section supersedes all older default-launch instructions below for the
+current user request. Read README.md, docs/BERT_SPARSE2D_40EPOCH.md and
+ docs/BERT_SPARSE2D_VALIDATION.md before acting.
+
+- Entrypoint: scripts/launch_bert_sparse2d_40epoch.sh. Default 40 PACKED epochs,
+  global batch448. Do not launch the older spatial-joint/unified/80-epoch scripts.
+- One BERT generating only sparse2D; full256 frozen base-feature context;
+  official TiTok encoder/class initialization, fresh2D embedding/head.
+  Keep direct replacement; no half blending, fusion, Halton initialization,
+  or local probe checkpoint resume unless explicitly requested.
+- Large assets/results stay outside the Git checkout, on the user's data disk:
+  MOTAR_ASSETS and MOTAR_RESULTS. Downloads: python -m bert2d.assets --fid.
+  No unpublished files or val cache are required; do not download legacy resume.
+- Explicit GPU allocation only; launch supports1/2/4/8, but hardware support is
+  not authorization. Packaging does not authorize a new local long training run.
+- Preserve global batch while auto-probing microbatch; explain any explicit
+  global-batch change. Run the launcher memory and save/resume gates before
+  formal training. No silent NaN/OOM bypass. Keep20GiB free startup headroom.
+- W&B online scalar training curves; no credentials in Git and no log.txt.
+- Keep only latest.pt per formal run, atomically updated every epoch/end/signal,
+  plus small JSON metadata. No numbered/best checkpoints. Verified smoke weights
+  are deleted after saving audit metadata. Source assets must not be modified.
+- Evaluate stable latest with bert2d.eval_sharded, same 5k/50k protocol, raw state,
+  full direct replacement and frozen official TiTok prefix. Never average shard
+  FIDs or compare different sample counts as a controlled improvement.
+- This is NOT a unified model and NOT proven to outperform pure1D. Do not infer
+  paper-ready success from packaging tests. See the validation limitations.
+
+---
+
+# Legacy agent instructions — apply only to explicitly requested legacy runs
+
 # Codex handoff — spatial MaskGIT + online fusion on H20
 
 ## Current default: spatial joint v1

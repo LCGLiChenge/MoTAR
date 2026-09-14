@@ -1,3 +1,42 @@
+# MoTAR — current handoff: BERT sparse 2D-only, 40 epochs
+
+The latest requested run is **TiTok-initialized BERT sparse 2D-only**, not the
+older unified model below. It takes the complete frozen 1D 16×16 feature grid,
+generates only Router-selected 2D tokens, and directly replaces selected regions.
+
+Read [the complete training + 5k/50k FID guide](docs/BERT_SPARSE2D_40EPOCH.md).
+It includes environment installation, all public weight/cache downloads,
+W&B setup, automatic GPU microbatch probing and strict save/resume startup tests.
+
+```bash
+# After activating the compatible environment; choose your own data-disk paths:
+export MOTAR_ASSETS=/mnt/data/YOUR_NAME/MoTAR/assets
+export MOTAR_RESULTS=/mnt/data/YOUR_NAME/MoTAR/bert2d
+python -m pip install -r requirements-bert2d-eval.txt
+python -m bert2d.assets --root "$MOTAR_ASSETS" --fid
+wandb login
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7  # explicitly allocated GPUs only
+bash scripts/launch_bert_sparse2d_40epoch.sh
+```
+
+Default: **40 packed-data epochs**, global batch448, fresh official TiTok backbone
+initialization; only **latest.pt**, overwritten each epoch. No intermediate
+numbered/best checkpoints. Existing output resumes to the same total target.
+40 packed epochs include two cached views/image; see the guide for the precise
+update and source-image-equivalent counts. All downloads have hash checks.
+No unpublished local checkpoint or validation cache is needed.
+
+[Packaging validation and limitations](docs/BERT_SPARSE2D_VALIDATION.md).
+This short-run model has not yet beaten the pure-1D baseline; publication makes
+it reproducible and does not claim the long run is already successful.
+
+---
+
+# Legacy documentation — only when explicitly requested
+
+The older 80-epoch unified/Halton instructions below are **not** the default for
+this BERT 2D-only handoff. Do not combine their launchers or checkpoints with it.
+
 # MoTAR Unified HaltonMix MaskGIT v2
 
 This repository contains the MoTAR unified MaskGIT experiment for mixed TiTok-L32 1D codes and sparse LlamaGen VQ-16 2D refinement codes.

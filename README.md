@@ -61,9 +61,10 @@ context_style      fullctx
 NPROC_PER_NODE     8
 MICRO_PER_GPU      320
 GLOBAL_BATCH       2560
-UPDATES            50000
+EPOCHS             80
+UPDATES            EPOCHS * ceil(2562334 / GLOBAL_BATCH), 80080 with default batch
 WARMUP             1000
-SAVE_EVERY         ceil(2562334 / GLOBAL_BATCH), about one augmented ImageNet epoch
+SAVE_EVERY         ceil(2562334 / GLOBAL_BATCH), 1001 with default batch
 EVAL_EVERY         SAVE_EVERY
 EVAL_N             512
 checkpoint policy  overwrite latest only
@@ -78,7 +79,7 @@ export GLOBAL_BATCH=$((MICRO_PER_GPU * 8))
 bash scripts/launch_halton_fullctx_sparse2d_h20.sh
 ```
 
-Use a fresh `RUN_NAME` or `MOTAR_OUTPUT` for each independent run.
+Use a fresh `RUN_NAME`, `MOTAR_OUTPUT`, or `EPOCHS` for each independent run.
 
 ## Current screened result
 
@@ -91,6 +92,8 @@ Local screening used generated 1D prefixes, E117 routes, selected sparse 2D gene
 | full-context 25u | 9.2837 | selected-only output |
 | full-context 50u | 9.1383 | current selected-only best screen |
 | full-context 75u | 9.1773 | lower NLL but worse FID |
+
+The H20 launcher is configured for 80 augmented ImageNet epochs by default.
 
 Current local checkpoint, not required for H20 long training:
 

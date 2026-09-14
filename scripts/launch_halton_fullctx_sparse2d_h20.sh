@@ -15,7 +15,7 @@ export USE_TF=0
 : "${HALTON_CKPT:=$ROOT_DIR/external_weights/halton_maskgit/ImageNet_256_base.pth}"
 : "${NPROC_PER_NODE:=8}"
 : "${MICRO_PER_GPU:=320}"
-: "${UPDATES:=50000}"
+: "${EPOCHS:=80}"
 : "${WARMUP:=1000}"
 : "${WORKERS:=8}"
 : "${LR_FEATURE:=0.0001}"
@@ -24,13 +24,14 @@ export USE_TF=0
 : "${FEATURE_CHUNK:=4}"
 : "${WANDB_PROJECT:=motar-selected2d-maskgit}"
 : "${WANDB_MODE:=online}"
-: "${RUN_NAME:=halton_fullctx_sparse2d_h20_8gpu_u${UPDATES}_m${MICRO_PER_GPU}}"
+: "${RUN_NAME:=halton_fullctx_sparse2d_h20_8gpu_e${EPOCHS}_m${MICRO_PER_GPU}}"
 : "${MOTAR_OUTPUT:=$MOTAR_MASKGIT_RESULT_ROOT/$RUN_NAME}"
 
 GLOBAL_BATCH=${GLOBAL_BATCH:-$((MICRO_PER_GPU * NPROC_PER_NODE))}
 # Full ImageNet train packed cache has two augmentations: 1,281,167 * 2 samples.
 SAVE_EVERY=${SAVE_EVERY:-$(((2562334 + GLOBAL_BATCH - 1) / GLOBAL_BATCH))}
 EVAL_EVERY=${EVAL_EVERY:-$SAVE_EVERY}
+UPDATES=${UPDATES:-$((EPOCHS * SAVE_EVERY))}
 
 if [[ ! -f "$HALTON_CKPT" ]]; then
   echo "Missing HALTON_CKPT: $HALTON_CKPT" >&2

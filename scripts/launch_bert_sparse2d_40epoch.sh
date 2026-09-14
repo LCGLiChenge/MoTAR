@@ -10,6 +10,8 @@ python -m bert2d.launch \
   --output "${OUTPUT:-$MOTAR_RESULTS/bert_sparse2d_40epoch}" \
   --assets-root "$MOTAR_ASSETS" \
   --epochs "${EPOCHS:-40}" \
+  --eval-every "${EVAL_EVERY:-2}" \
+  --eval-batch "${EVAL_BATCH:-8}" \
   --global-batch "${GLOBAL_BATCH:-448}" \
   --micro "${MICRO:-0}" \
   --recompute-layers "${RECOMPUTE_LAYERS:-10}" \

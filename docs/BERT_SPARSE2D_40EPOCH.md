@@ -38,7 +38,7 @@ bash scripts/install_h20_environment.sh --active-env
 # Extra dependencies for ADM-FID (also needed when training env already exists):
 python -m pip install -r requirements-bert2d-eval.txt
 python -m pip check
-USE_TF=0 python -m unittest bert2d.test_model bert2d.test_resume
+USE_TF=0 python -m unittest bert2d.test_model bert2d.test_resume bert2d.test_periodic_eval
 ```
 
 The installation script without `--active-env` creates the `motar-h20` conda
@@ -122,7 +122,48 @@ assets and model configuration must match. The launcher rechecks memory.
 Do not substitute the older local 4k/8k probe directory into this formal launcher.
 Use a new `OUTPUT` directory for an independent experiment.
 
-## 4. Generation and FID
+## 4. Automatic 5k FID every two epochs
+
+The default launcher now evaluates at epochs **2, 4, ..., 40** (20 evaluations).
+At each boundary the distributed trainer saves the usual `latest.pt` and exits;
+its GPU memory is released. The same allocated GPUs run paired 5k free-generation
+FID, the results are logged to the **same W&B run**, and training resumes from
+that same latest checkpoint with model/Adam/per-rank RNG/data cursor restored.
+The total target and LR schedule remain 40 epochs; optimizer warmup does not restart.
+There is no evaluation snapshot or additional model checkpoint.
+
+W&B curves (x-axis `epoch`):
+
+- `eval/fid5k_full`: full direct-replacement refinement, the primary metric.
+- `eval/fid5k_base`: paired pure-1D baseline.
+- `eval/fid5k_full_minus_base`: negative means refinement improves FID.
+- `eval/is5k_base`, `eval/is5k_full`: Inception Scores from the same evaluation.
+
+Training curves retain optimizer `step` as their x-axis. W&B uses its own history
+counter, so an evaluation at an already logged optimizer step is not dropped.
+Default evaluation settings are 5,000 samples, seed20260914, batch8/GPU, raw
+weights, `halton_fixed_margin4`, and all GPUs allocated to this launcher.
+Keep GPU count and eval batch fixed for comparable sampling streams.
+`EVAL_BATCH` can be explicitly reduced if the target GPU cannot fit evaluation;
+`EVAL_EVERY` defaults to2. The evaluation assets and TensorFlow GPU availability
+are checked **before** formal training, not first discovered after two epochs.
+
+Local results stay under the run's `evaluations/epochXXX_attemptYY/`; only scalar
+metrics are uploaded to W&B, not weights, images or feature arrays. Evaluation
+adds runtime and roughly a few GB of retained feature files over the 40-epoch run.
+`pipeline_status.json` distinguishes training completion from pending evaluation.
+Failed eval/upload blocks further training and leaves `latest.pt` intact. Re-run
+the same launcher to retry the current boundary; a complete matching evaluation
+is reused without regenerating samples. Partial failed attempts are preserved.
+
+For an **already running old launcher**, `git pull` alone does not change its
+running process. Gracefully stop it, wait for its checkpoint save and processes
+to exit, then launch the same output directory with the updated command. This
+resumes the current weights, not fresh training. Because only latest is retained,
+missing earlier-epoch FIDs cannot be retrospectively recovered. Use W&B online
+for a single resumed cloud run; offline mode retains local sessions for manual sync.
+
+## 5. Standalone generation and FID
 
 Evaluate a stable checkpoint (training finished or stopped); do not race the
 epoch-level overwrite of `latest.pt`. All shards must load the same SHA-256 or

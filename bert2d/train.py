@@ -10,6 +10,7 @@ from torch import nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, Dataset
 from .paths import ASSETS, atomic_json, output_path, sha256
+from .periodic_eval import define_axes
 from .model import BertSparse2D, load_titok_backbone
 from .features import PortableBaseFeatures
 from .runtime import RankBucketSampler, OffsetSampler, smoothed_objective, save_latest
@@ -61,6 +62,7 @@ def main(args):
     rank,world,local=(int(os.environ.get(k,d)) for k,d in (("RANK",0),("WORLD_SIZE",1),("LOCAL_RANK",0)))
     if world not in (1,2,4,8):raise ValueError("supported world sizes: 1,2,4,8")
     if args.global_batch%(args.micro*world):raise ValueError("global batch must divide micro*world")
+    if not 0 <= args.stop_after_epoch <= args.epochs:raise ValueError("stop-after-epoch outside total target")
     if args.epochs<1 or args.micro<1:raise ValueError("positive epochs/micro required")
     if args.synthetic and not 1<=args.smoke_updates<=8:raise ValueError("synthetic mode only permits a bounded smoke")
     if args.device=="cpu" and not args.synthetic:raise ValueError("CPU mode is only a synthetic implementation test")
@@ -125,6 +127,7 @@ def main(args):
                 run=wandb.init(project=args.wandb_project,name=output.name,dir=str(output),mode=args.wandb_mode,
                                config=cfg,id=wandb_id,resume="allow")
                 atomic_json(id_path,dict(id=wandb_id,project=args.wandb_project))
+                define_axes(run)
         sampler=OffsetSampler(RankBucketSampler(data,args.micro,world,rank,args.seed))
         loader=DataLoader(data,batch_sampler=sampler,collate_fn=collate_e117_sparse,num_workers=args.workers,
             pin_memory=device.type=="cuda",generator=torch.Generator().manual_seed(90000+rank))
@@ -137,7 +140,9 @@ def main(args):
             atomic_json(output/f"resume_audit_rank{rank}.json",{k:v for k,v in restored.items() if not k.startswith("rng_")})
         else:torch.manual_seed(args.seed+1000+rank)
         window=torch.zeros(4,device=device);count=0;tick=time.monotonic()
-        for step in range(start+1,target+1):
+        segment_target = min(target, args.stop_after_epoch * updates_per_epoch) if args.stop_after_epoch else target
+        if segment_target <= start: raise ValueError("segment boundary already reached")
+        for step in range(start+1,segment_target+1):
             for group in opt.param_groups:
                 factor=min(1.,step/50) if group["name"]=="fresh" else max(0.,min(1.,(step-20)/100))
                 group["lr"]=group["base_lr"]*factor
@@ -154,7 +159,7 @@ def main(args):
             dist.all_reduce(stats);window+=stats/world;count+=1
             flag=torch.tensor(int(stopping),device=device);dist.all_reduce(flag,op=dist.ReduceOp.MAX)
             stopping=bool(flag.item())
-            if step<=start+3 or step%10==0 or step==target or stopping:
+            if step<=start+3 or step%10==0 or step==segment_target or stopping:
                 row=dict(step=step,epoch=step/updates_per_epoch,status="running",loss2d=float(window[0]/count),
                     masked_nll2d=float(window[1]/count),mask_ratio=float(window[2]/count),class_drop_fraction=float(window[3]/count),
                     grad_norm=float(grad),seconds_per_step=(time.monotonic()-tick)/count,
@@ -164,9 +169,9 @@ def main(args):
                     atomic_json(output/"status.json",row)
                     with (output/"metrics.jsonl").open("a") as f:f.write(json.dumps(row)+"\n")
                     print(json.dumps(row),flush=True)
-                    if run:run.log(row,step=step)
+                    if run:run.log(row)
                 window.zero_();count=0;tick=time.monotonic()
-            if step%updates_per_epoch==0 or step==target or stopping:
+            if step%updates_per_epoch==0 or step==segment_target or stopping:
                 rng=[None]*world
                 cuda_rng=torch.cuda.get_rng_state(device) if device.type=="cuda" else torch.empty(0,dtype=torch.uint8)
                 dist.all_gather_object(rng,dict(cpu=torch.get_rng_state(),cuda=cuda_rng))
@@ -177,7 +182,7 @@ def main(args):
             if stopping:break
         if not args.synthetic:provider.assert_frozen()
         if rank==0:
-            summary=dict(status="interrupted" if stopping else "complete",step=step,target=target,
+            summary=dict(status="interrupted" if stopping else ("awaiting_eval" if step<target else "complete"),step=step,target=target,
                          epoch=step/updates_per_epoch,elapsed_seconds=time.monotonic()-started,config=cfg)
             atomic_json(output/"status.json",summary);atomic_json(output/"summary.json",summary)
             if run:run.finish()
@@ -193,6 +198,7 @@ def parser():
     p.add_argument("--assets-root",type=Path,default=ASSETS)
     p.add_argument("--resume",type=Path,help="checkpoint DIRECTORY; restores raw+Adam+rank RNG+cursor")
     p.add_argument("--epochs",type=int,default=40)
+    p.add_argument("--stop-after-epoch",type=int,default=0,help="save and exit at this boundary without changing total schedule")
     p.add_argument("--micro",type=int,default=56)
     p.add_argument("--global-batch",type=int,default=448)
     p.add_argument("--seed",type=int,default=0)

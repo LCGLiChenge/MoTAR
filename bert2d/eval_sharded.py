@@ -223,6 +223,7 @@ def merge_shards(args, output: Path, gpus: list[str]) -> dict:
         state=args.state,
         seed=args.seed,
         checkpoint=str(args.checkpoint.resolve()),
+        checkpoint_sha256=args._checkpoint_hash,
         variants=args.variants,
         endpoints=endpoints,
         metrics=metrics,
@@ -274,12 +275,14 @@ def main(args: argparse.Namespace) -> None:
     gpus = parse_gpus(args.gpus)
     args.variants = args.variants or ["halton_fixed_margin4"]
     output.mkdir(parents=True)
+    args._checkpoint_hash = digest(args.checkpoint / "latest.pt")
     atomic_json(output / "manifest.json", dict(
         format="bert_sparse2d_sharded_free_fid_v1",
         n=args.n,
         num_shards=len(gpus),
         gpus=gpus,
         checkpoint=str(args.checkpoint.resolve()),
+        checkpoint_sha256=args._checkpoint_hash,
         state=args.state,
         seed=args.seed,
         batch=args.batch,
@@ -291,7 +294,6 @@ def main(args: argparse.Namespace) -> None:
         smoke=args.smoke,
         launched_at=time.strftime("%Y-%m-%d %H:%M:%S %z"),
     ))
-    args._checkpoint_hash = digest(args.checkpoint / "latest.pt")
     launch_shards(args, output, gpus)
     merge_shards(args, output, gpus)
 

@@ -3,6 +3,7 @@ import argparse,json,os,shutil,subprocess,sys,tempfile
 from pathlib import Path
 from .paths import ASSETS,RESULT_ROOT,ROOT,atomic_json,output_path
 from .assets import verify
+from .periodic_eval import run_schedule
 def run(cmd,env):subprocess.run(cmd,cwd=ROOT,env=env,check=True)
 def main(a):
     visible=os.environ.get("CUDA_VISIBLE_DEVICES","")
@@ -10,13 +11,15 @@ def main(a):
     if len(gpus) not in (1,2,4,8) or len(set(gpus))!=len(gpus):
         raise ValueError("set explicitly authorized CUDA_VISIBLE_DEVICES (1/2/4/8 distinct GPUs)")
     n=len(gpus)
+    if a.eval_every<1 or not 1<=a.eval_batch<=32:raise ValueError("positive eval cadence and batch 1..32 required")
     if a.epochs<1 or a.global_batch<1 or a.micro<0:raise ValueError("positive epoch/global batch and nonnegative micro required")
     if a.global_batch%n:raise ValueError("global batch must divide number of GPUs")
     if a.micro and a.global_batch%(a.micro*n):raise ValueError("micro*world must divide global batch")
     out=output_path(a.output);out.parent.mkdir(parents=True,exist_ok=True)
     if shutil.disk_usage(out.parent).free<20*1024**3:raise RuntimeError("at least 20 GiB free output space required before startup")
     env=os.environ.copy();env.update(USE_TF="0",PYTORCH_ALLOC_CONF="expandable_segments:True")
-    if not a.skip_asset_verify:verify(a.assets_root)
+    if not a.skip_asset_verify:verify(a.assets_root,include_fid=True)
+    run([sys.executable,"-c","import tensorflow as tf; import scipy; assert tf.config.list_physical_devices('GPU'), 'ADM TensorFlow GPU unavailable'"],dict(env,CUDA_VISIBLE_DEVICES=gpus[0]))
     rows=subprocess.check_output(["nvidia-smi","--query-gpu=index,uuid,memory.free","--format=csv,noheader,nounits"],text=True)
     free={}
     for row in rows.strip().splitlines():
@@ -67,9 +70,9 @@ def main(a):
             raise RuntimeError("GPU memory availability changed before training")
     cmd=base+common+["--output",str(out),"--epochs",str(a.epochs),
         "--wandb-project",a.wandb_project,"--wandb-mode",a.wandb_mode]
-    if resume:cmd+=["--resume",str(resume)]
     atomic_json(probe_dir/"launch.json",dict(command=cmd,global_batch=a.global_batch,micro=chosen,world=n,epochs=a.epochs))
-    run(cmd,env)
+    a.output=out
+    run_schedule(a,cmd,env,gpus)
 def row_peak(row,probe_dir,micro):
     d=json.loads((probe_dir/f"memory_m{micro}.json").read_text())
     return d["peak_reserved_mib"]+1536
@@ -78,6 +81,9 @@ if __name__=="__main__":
     p.add_argument("--output",type=Path,default=RESULT_ROOT/"bert_sparse2d_40epoch")
     p.add_argument("--assets-root",type=Path,default=ASSETS)
     p.add_argument("--epochs",type=int,default=40)
+    p.add_argument("--eval-every",type=int,default=2,help="run paired 5k FID every N completed epochs")
+    p.add_argument("--eval-batch",type=int,default=8)
+    p.add_argument("--eval-seed",type=int,default=20260914)
     p.add_argument("--global-batch",type=int,default=448)
     p.add_argument("--micro",type=int,default=0,help="0 probes divisors while preserving global batch")
     p.add_argument("--recompute-layers",type=int,default=10)

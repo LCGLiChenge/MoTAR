@@ -26,6 +26,12 @@ numbered/best checkpoints. Existing output resumes to the same total target.
 update and source-image-equivalent counts. All downloads have hash checks.
 No unpublished local checkpoint or validation cache is needed.
 
+**Automatic evaluation:** every2 completed epochs (2,4,…,40), run paired5k FID
+on the same allocated GPUs and log base/full-refine FID to the same W&B run.
+Training pauses and releases GPU memory for eval, then resumes full state from
+latest; no extra checkpoints. See the guide for failure recovery and updating
+an already-running launcher.
+
 [Packaging validation and limitations](docs/BERT_SPARSE2D_VALIDATION.md).
 This short-run model has not yet beaten the pure-1D baseline; publication makes
 it reproducible and does not claim the long run is already successful.

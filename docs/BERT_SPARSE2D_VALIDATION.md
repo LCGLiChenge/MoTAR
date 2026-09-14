@@ -34,3 +34,18 @@ and eight-GPU memory headroom cannot be certified by CPU checks on this machine.
 The local 4k→8k continuation was not modified or restarted by this publication.
 There are no new weights to upload: the fresh initialization and frozen assets
 are already public and listed in the download manifest.
+
+## Periodic FID update
+
+- Four added CPU orchestration tests cover exactly20 evaluations at epochs2..40,
+  latest-only retention, recovery after failed eval, reuse of completed results,
+  invalid-metric rejection and same-W&B-run upload without a duplicate explicit
+  history step. W&B calls are mocked; this is not evidence of a real cloud upload.
+- Existing seven model/resume tests are retained. Real GPU FID computation is
+  unchanged; the sharded summary now records its checkpoint SHA-256.
+- Target-server startup checks FID assets and TensorFlow GPU availability before
+  training. No additional local GPU experiment is started for this packaging.
+- Two-rank Gloo integration: continuous8 updates versus4 updates + full-state
+  resume to8. All180 saved model/Adam/per-rank RNG tensors match exactly; both
+  checkpoints have SHA-256 `60b0c19f78fce655bbcc136ba51faa8491e0ed30486f0261add440f2ddcef73a`.
+  Smoke weights were removed after verification; metadata and cleanup manifest remain.

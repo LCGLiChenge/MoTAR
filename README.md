@@ -4,6 +4,13 @@ The latest requested run is **TiTok-initialized BERT sparse 2D-only**, not the
 older unified model below. It takes the complete frozen 1D 16×16 feature grid,
 generates only Router-selected 2D tokens, and directly replaces selected regions.
 
+**Batch/LR update (2026-09-15):** new runs use joint AdamW scaling from reference
+batch448. [Exact rules and bounded H20 test commands](docs/BERT_BATCH_SCALING.md).
+To compare on H20, run `scripts/test_bert_sparse2d_h20_scaling.sh` for B448 and
+B3200 in separate outputs: each stops after **one packed epoch + one paired 5k FID**.
+Old checkpoints require `BATCH_SCALING=legacy`; never silently change their
+optimizer state. Implementation tests passed; FID improvement is not yet established.
+
 Read [the complete training + 5k/50k FID guide](docs/BERT_SPARSE2D_40EPOCH.md).
 It includes environment installation, all public weight/cache downloads,
 W&B setup, automatic GPU microbatch probing and strict save/resume startup tests.

@@ -4,8 +4,19 @@ from pathlib import Path
 from .paths import ASSETS,RESULT_ROOT,ROOT,atomic_json,output_path
 from .assets import verify
 from .periodic_eval import run_schedule
+from .optimization import add_arguments, from_args, cli_arguments, validate_saved_config, validate_saved_groups
 def run(cmd,env):subprocess.run(cmd,cwd=ROOT,env=env,check=True)
 def main(a):
+    recipe=from_args(a)
+    if not 0<=a.test_epochs<=a.epochs:
+        raise ValueError("test-epochs must be zero or at most the total epochs")
+    if a.print_optimization:
+        print(json.dumps(recipe,indent=2));return
+    out=output_path(a.output)
+    if (out/"latest.pt").exists():
+        meta=json.loads((out/"latest.json").read_text())
+        validate_saved_config(meta["config"],recipe)
+        validate_saved_groups(meta["optimizer"],recipe)
     visible=os.environ.get("CUDA_VISIBLE_DEVICES","")
     gpus=[s.strip() for s in visible.split(",") if s.strip()]
     if len(gpus) not in (1,2,4,8) or len(set(gpus))!=len(gpus):
@@ -42,7 +53,8 @@ def main(a):
         result=probe_dir/f"memory_m{value}.json"
         probe_env=dict(env,CUDA_VISIBLE_DEVICES=limited)
         cmd=[sys.executable,"-m","bert2d.probe","--micro",str(value),"--output",str(result),
-             "--assets-root",str(a.assets_root),"--recompute-layers",str(a.recompute_layers),"--limit-mib",str(limit)]
+             "--assets-root",str(a.assets_root),"--recompute-layers",str(a.recompute_layers),"--limit-mib",str(limit),
+             "--global-batch",str(a.global_batch)]+cli_arguments(a)
         rc=subprocess.run(cmd,cwd=ROOT,env=probe_env).returncode
         if rc not in (0,2):raise RuntimeError("capacity probe failed; not a recoverable capacity result")
         row=json.loads(result.read_text())
@@ -50,7 +62,7 @@ def main(a):
     if chosen is None:raise RuntimeError("no allowed microbatch fits; no training started")
     base=[sys.executable,"-m","torch.distributed.run","--standalone",f"--nproc_per_node={n}","-m","bert2d.train"]
     common=["--micro",str(chosen),"--global-batch",str(a.global_batch),"--assets-root",str(a.assets_root),
-            "--recompute-layers",str(a.recompute_layers)]
+            "--recompute-layers",str(a.recompute_layers)]+cli_arguments(a)
     if not resume:
         smoke=probe_dir/"save_resume_smoke"
         run(base+common+["--output",str(smoke),"--smoke-updates","2","--wandb-mode","disabled"],env)
@@ -70,9 +82,15 @@ def main(a):
             raise RuntimeError("GPU memory availability changed before training")
     cmd=base+common+["--output",str(out),"--epochs",str(a.epochs),
         "--wandb-project",a.wandb_project,"--wandb-mode",a.wandb_mode]
-    atomic_json(probe_dir/"launch.json",dict(command=cmd,global_batch=a.global_batch,micro=chosen,world=n,epochs=a.epochs))
+    atomic_json(probe_dir/"launch.json",dict(command=cmd,global_batch=a.global_batch,micro=chosen,world=n,epochs=a.epochs,test_epochs=a.test_epochs,optimization=recipe))
     a.output=out
-    run_schedule(a,cmd,env,gpus)
+    # Bounded test stops the orchestrator, but trainer keeps its full epoch target.
+    run_schedule(schedule_arguments(a),cmd,env,gpus)
+def schedule_arguments(a):
+    if not 0<=a.test_epochs<=a.epochs:raise ValueError("invalid test epoch limit")
+    limited=argparse.Namespace(**vars(a))
+    if a.test_epochs:limited.epochs=a.test_epochs
+    return limited
 def row_peak(row,probe_dir,micro):
     d=json.loads((probe_dir/f"memory_m{micro}.json").read_text())
     return d["peak_reserved_mib"]+1536
@@ -81,10 +99,13 @@ if __name__=="__main__":
     p.add_argument("--output",type=Path,default=RESULT_ROOT/"bert_sparse2d_40epoch")
     p.add_argument("--assets-root",type=Path,default=ASSETS)
     p.add_argument("--epochs",type=int,default=40)
+    p.add_argument("--test-epochs",type=int,default=0,help="bounded test: stop after N epochs; keep full trainer target; 0 disables")
     p.add_argument("--eval-every",type=int,default=2,help="run paired 5k FID every N completed epochs")
     p.add_argument("--eval-batch",type=int,default=8)
     p.add_argument("--eval-seed",type=int,default=20260914)
     p.add_argument("--global-batch",type=int,default=448)
+    add_arguments(p)
+    p.add_argument("--print-optimization",action="store_true",help="print resolved recipe and exit before any GPU or asset checks")
     p.add_argument("--micro",type=int,default=0,help="0 probes divisors while preserving global batch")
     p.add_argument("--recompute-layers",type=int,default=10)
     p.add_argument("--wandb-project",default="motar-bert-sparse2d")

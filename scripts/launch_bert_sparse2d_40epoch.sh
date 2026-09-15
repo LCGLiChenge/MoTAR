@@ -14,6 +14,9 @@ python -m bert2d.launch \
   --eval-batch "${EVAL_BATCH:-8}" \
   --global-batch "${GLOBAL_BATCH:-448}" \
   --micro "${MICRO:-0}" \
+  --batch-scaling "${BATCH_SCALING:-adamw-sde}" \
+  --lr-new "${LR_NEW:-1e-4}" \
+  --lr-pretrained "${LR_PRETRAINED:-1e-5}" \
   --recompute-layers "${RECOMPUTE_LAYERS:-10}" \
   --wandb-project "${WANDB_PROJECT:-motar-bert-sparse2d}" \
   --wandb-mode "${WANDB_MODE:-online}" "$@"

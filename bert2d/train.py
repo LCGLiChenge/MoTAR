@@ -15,6 +15,8 @@ from .model import BertSparse2D, load_titok_backbone
 from .features import PortableBaseFeatures
 from .runtime import RankBucketSampler, OffsetSampler, smoothed_objective, save_latest
 from .resume import load_resume, restore_rng, resumed_stream
+from .optimization import (add_arguments, from_args, make_optimizer, set_learning_rates,
+                           validate_saved_config, validate_saved_groups)
 from h20.base_model import sample_arccos_mask
 from h20.data import E117SparseCodeDataset, collate_e117_sparse
 
@@ -48,6 +50,9 @@ def synthetic_features(z1):
 def validate_resume(directory,args,world):
     meta=json.loads((directory/"latest.json").read_text())
     cfg=meta["config"]
+    recipe=from_args(args)
+    validate_saved_config(cfg,recipe)
+    validate_saved_groups(meta["optimizer"],recipe)
     if cfg["style"]!="bert_fullctx_sparse2d_v1":raise ValueError("wrong checkpoint model")
     for key in ("micro","global_batch","seed","lr_new","lr_pretrained","recompute_layers"):
         if cfg[key]!=getattr(args,key):raise ValueError("resume config mismatch: "+key)
@@ -59,6 +64,7 @@ def validate_resume(directory,args,world):
     return meta
 
 def main(args):
+    recipe=from_args(args)
     rank,world,local=(int(os.environ.get(k,d)) for k,d in (("RANK",0),("WORLD_SIZE",1),("LOCAL_RANK",0)))
     if world not in (1,2,4,8):raise ValueError("supported world sizes: 1,2,4,8")
     if args.global_batch%(args.micro*world):raise ValueError("global batch must divide micro*world")
@@ -94,11 +100,7 @@ def main(args):
         if args.recompute_layers:core.enable_recompute(min(args.recompute_layers,len(core.encoder.layer)))
         provider=synthetic_features if args.synthetic else PortableBaseFeatures(str(device),args.feature_chunk,assets_root=args.assets_root)
         core.set_feature_provider(provider)
-        fresh=set(audit["fresh_parameters"]);groups=[]
-        for name,is_new,lr in (("fresh",True,args.lr_new),("pretrained",False,args.lr_pretrained)):
-            params=[p for n,p in core.named_parameters() if (n in fresh)==is_new]
-            if params:groups.append(dict(params=params,name=name,lr=0.,base_lr=lr))
-        opt=torch.optim.AdamW(groups,betas=(.9,.96),weight_decay=.03)
+        opt=make_optimizer(core,audit,recipe)
         restored=load_resume(core,opt,args.resume,meta,rank) if meta else None
         start=int(meta["step"]) if meta else 0
         data=SyntheticDataset() if args.synthetic else E117SparseCodeDataset(args.assets_root/"codes/train",args.assets_root/"routes/train",split="all")
@@ -108,7 +110,7 @@ def main(args):
         target=args.smoke_updates or args.epochs*updates_per_epoch
         if start>=target:raise ValueError("checkpoint already reached requested TOTAL target")
         cfg={k:str(v.resolve()) if isinstance(v,Path) else v for k,v in vars(args).items()}
-        cfg.update(style="bert_fullctx_sparse2d_v1",dim=core.dim,depth=len(core.encoder.layer),
+        cfg.update(optimization=recipe,style="bert_fullctx_sparse2d_v1",dim=core.dim,depth=len(core.encoder.layer),
             heads=4 if args.synthetic else 16,dropout=.1,world=world,accumulation=accum,
             updates_per_epoch=updates_per_epoch,total_updates=target,packed_examples=len(data),
             epoch_definition="ceil(packed_examples/global_batch) consecutive updates; bucket drop_last",
@@ -139,13 +141,11 @@ def main(args):
             restore_rng(restored)
             atomic_json(output/f"resume_audit_rank{rank}.json",{k:v for k,v in restored.items() if not k.startswith("rng_")})
         else:torch.manual_seed(args.seed+1000+rank)
-        window=torch.zeros(4,device=device);count=0;tick=time.monotonic()
+        window=torch.zeros(4,device=device);count=0;clipped=0;tick=time.monotonic()
         segment_target = min(target, args.stop_after_epoch * updates_per_epoch) if args.stop_after_epoch else target
         if segment_target <= start: raise ValueError("segment boundary already reached")
         for step in range(start+1,segment_target+1):
-            for group in opt.param_groups:
-                factor=min(1.,step/50) if group["name"]=="fresh" else max(0.,min(1.,(step-20)/100))
-                group["lr"]=group["base_lr"]*factor
+            set_learning_rates(opt,recipe,step)
             opt.zero_grad(set_to_none=True);stats=torch.zeros(4,device=device)
             for micro in range(accum):
                 cpu,cursor=next(stream);batch={k:v.to(device,non_blocking=True) for k,v in cpu.items()}
@@ -155,7 +155,8 @@ def main(args):
                     if not bool(torch.isfinite(loss)):raise RuntimeError("nonfinite loss")
                     (loss/accum).backward()
                 stats+=values/accum
-            grad=nn.utils.clip_grad_norm_(core.parameters(),1.,error_if_nonfinite=True);opt.step()
+            grad=nn.utils.clip_grad_norm_(core.parameters(),recipe["grad_clip"],error_if_nonfinite=True);opt.step()
+            clipped+=int(float(grad)>recipe["grad_clip"])
             dist.all_reduce(stats);window+=stats/world;count+=1
             flag=torch.tensor(int(stopping),device=device);dist.all_reduce(flag,op=dist.ReduceOp.MAX)
             stopping=bool(flag.item())
@@ -164,13 +165,18 @@ def main(args):
                     masked_nll2d=float(window[1]/count),mask_ratio=float(window[2]/count),class_drop_fraction=float(window[3]/count),
                     grad_norm=float(grad),seconds_per_step=(time.monotonic()-tick)/count,
                     peak_reserved_gib=torch.cuda.max_memory_reserved(device)/1024**3 if device.type=="cuda" else 0.,
-                    lr_new=opt.param_groups[0]["lr"],samples_seen=step*args.global_batch)
+                    lr_new=opt.param_groups[0]["lr"],samples_seen=step*args.global_batch,
+                    lr_pretrained=next((g["lr"] for g in opt.param_groups if g["name"]=="pretrained"),0.),
+                    clip_fraction=clipped/count,reference_updates=step*args.global_batch/448,
+                    beta1=recipe["betas"][0],beta2=recipe["betas"][1],
+                    optimizer_eps=recipe["eps"],weight_decay=recipe["weight_decay"],
+                    samples_per_second=count*args.global_batch/max(time.monotonic()-tick,1e-9))
                 if rank==0:
                     atomic_json(output/"status.json",row)
                     with (output/"metrics.jsonl").open("a") as f:f.write(json.dumps(row)+"\n")
                     print(json.dumps(row),flush=True)
                     if run:run.log(row)
-                window.zero_();count=0;tick=time.monotonic()
+                window.zero_();count=0;clipped=0;tick=time.monotonic()
             if step%updates_per_epoch==0 or step==segment_target or stopping:
                 rng=[None]*world
                 cuda_rng=torch.cuda.get_rng_state(device) if device.type=="cuda" else torch.empty(0,dtype=torch.uint8)
@@ -204,8 +210,7 @@ def parser():
     p.add_argument("--seed",type=int,default=0)
     p.add_argument("--workers",type=int,default=2)
     p.add_argument("--feature-chunk",type=int,default=8)
-    p.add_argument("--lr-new",type=float,default=1e-4)
-    p.add_argument("--lr-pretrained",type=float,default=1e-5)
+    add_arguments(p)
     p.add_argument("--recompute-layers",type=int,default=10)
     p.add_argument("--wandb-project",default="motar-bert-sparse2d")
     p.add_argument("--wandb-mode",choices=("online","offline","disabled"),default="online")

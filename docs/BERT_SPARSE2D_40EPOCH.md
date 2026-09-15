@@ -3,6 +3,16 @@
 This is the current requested experiment, not the older unified/Halton/fusion
 models retained elsewhere in this repository. The implementation is in `bert2d/`.
 
+## Batch/LR update (2026-09-15)
+
+New runs now use reference-batch **joint AdamW scaling**. See
+[BERT_BATCH_SCALING.md](BERT_BATCH_SCALING.md) for formulas, B=3200 values,
+commands and limitations. B=448 retains the original numerical recipe.
+`GLOBAL_BATCH` changes automatically scale both LRs, betas, epsilon, decay,
+and the sample-based warmup clock. This has not yet demonstrated better FID.
+Old checkpoints require `BATCH_SCALING=legacy`; do not apply new settings by
+silently resuming an old run.
+
 ## Model and initialization
 
 - One BERT encoder, 24 layers, width 768, 16 heads, FFN 3072, about 196.46M
@@ -18,7 +28,8 @@ models retained elsewhere in this repository. The implementation is in `bert2d/`
   TiTok generator, then predicts sparse 2D codes. Selected features directly
   replace the base grid before decoding: no half blending or learned fusion.
 - Full packed TRAIN cache, arccos masking, 0.1 label smoothing, 0.1 visible CE,
-  0.1 class dropout (spatial condition retained), AdamW betas=(0.9,0.96), WD=0.03,
+  0.1 class dropout (spatial condition retained). At reference B=448:
+  AdamW betas=(0.9,0.96), WD=0.03,
   grad clip=1. New LR=1e-4 with 50-update ramp; pretrained LR=1e-5, zero for the
   first 20 updates and ramped over 100 updates. Rates then remain constant,
   matching the short experiment; this is not claimed to be a proven long-run schedule.
@@ -38,7 +49,7 @@ bash scripts/install_h20_environment.sh --active-env
 # Extra dependencies for ADM-FID (also needed when training env already exists):
 python -m pip install -r requirements-bert2d-eval.txt
 python -m pip check
-USE_TF=0 python -m unittest bert2d.test_model bert2d.test_resume bert2d.test_periodic_eval
+USE_TF=0 python -m unittest bert2d.test_model bert2d.test_resume bert2d.test_periodic_eval bert2d.test_optimization
 ```
 
 The installation script without `--active-env` creates the `motar-h20` conda
@@ -105,7 +116,8 @@ Defaults:
   Auto-probe chooses the largest safe microbatch that divides global batch.
   With 8 GPUs the ceiling is 56/GPU; it will not silently increase the global
   batch merely to fill H20/H200 memory. To intentionally change the recipe, set
-  e.g. `GLOBAL_BATCH=896`; this changes optimization and epoch update counts.
+  e.g. `GLOBAL_BATCH=896`; this resolves the documented AdamW scaling and
+  changes epoch update counts. Reference LR inputs must not be pre-scaled.
   `MICRO=0` is automatic; an explicit `MICRO` must divide the global batch/world.
 - W&B online scalar curves, plus small JSON status/metrics; no `log.txt` or
   TensorBoard. Authenticate with `wandb login`; never put keys in Git.
@@ -117,7 +129,8 @@ Defaults:
   The `.pt` file uses the safetensors container, not `torch.load`.
 
 Re-run the same command and output directory to resume its `latest.pt` to the
-same **total 40 epochs**, not 40 more. World size, micro/global batch, LR, seed,
+same **total 40 epochs**, not 40 more. Pre-scaling-release runs must explicitly
+set `BATCH_SCALING=legacy`. World size, micro/global batch, resolved optimizer recipe, LR, seed,
 assets and model configuration must match. The launcher rechecks memory.
 Do not substitute the older local 4k/8k probe directory into this formal launcher.
 Use a new `OUTPUT` directory for an independent experiment.

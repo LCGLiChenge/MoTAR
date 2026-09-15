@@ -53,6 +53,26 @@ class PeriodicTests(unittest.TestCase):
         run_schedule(self.args, ["train"], {}, ["0", "1"], runner=self.fake_runner)
         self.assertEqual(len(self.evaluated), 20)  # Reuse completed matching FID.
 
+    def test_bounded_test_stops_after_one_eval_without_changing_full_target(self):
+        from .launch import schedule_arguments
+        self.args.test_epochs=1
+        self.args.eval_every=1
+        limited=schedule_arguments(self.args)
+        self.assertEqual(self.args.epochs,40)
+        self.assertEqual(limited.epochs,1)
+        commands=[]
+        def runner(cmd):
+            commands.append(cmd)
+            self.fake_runner(cmd)
+        run_schedule(limited,["train","--epochs","40"],{},["0"],runner=runner)
+        self.assertEqual(self.trained,[1])
+        self.assertEqual(self.evaluated,[1])
+        self.assertEqual(commands[0][commands[0].index("--epochs")+1],"40")
+        run_schedule(limited,["train","--epochs","40"],{},["0"],runner=runner)
+        self.assertEqual(self.trained,[1])
+        self.args.test_epochs=41
+        with self.assertRaises(ValueError):schedule_arguments(self.args)
+
     def test_failed_eval_blocks_next_training_and_retries_fresh_path(self):
         def fail(cmd):
             if "bert2d.eval_sharded" in cmd:

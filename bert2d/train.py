@@ -11,6 +11,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, Dataset
 from .paths import ASSETS, atomic_json, output_path, sha256
 from .periodic_eval import define_axes
+from .async_eval import AsyncEvaluator
 from .model import BertSparse2D, load_titok_backbone
 from .features import PortableBaseFeatures
 from .runtime import RankBucketSampler, OffsetSampler, smoothed_objective, save_latest
@@ -65,6 +66,12 @@ def validate_resume(directory,args,world):
 
 def main(args):
     recipe=from_args(args)
+    if args.async_eval and (args.synthetic or args.smoke_updates):
+        raise ValueError("async FID requires a formal checkpoint, not trainer synthetic/smoke mode")
+    if args.eval_every<1 or not 1<=args.eval_batch<=32:
+        raise ValueError("invalid async eval cadence/batch")
+    if not 0<args.eval_load_timeout<=args.eval_timeout:
+        raise ValueError("invalid eval timeouts")
     rank,world,local=(int(os.environ.get(k,d)) for k,d in (("RANK",0),("WORLD_SIZE",1),("LOCAL_RANK",0)))
     if world not in (1,2,4,8):raise ValueError("supported world sizes: 1,2,4,8")
     if args.global_batch%(args.micro*world):raise ValueError("global batch must divide micro*world")
@@ -77,9 +84,16 @@ def main(args):
     device=torch.device("cuda",local) if args.device=="cuda" else torch.device("cpu")
     if device.type=="cuda":torch.cuda.set_device(local)
     torch.set_num_threads(4)
-    dist.init_process_group("nccl" if device.type=="cuda" else "gloo",timeout=timedelta(minutes=20))
+    dist.init_process_group("nccl" if device.type=="cuda" else "gloo",timeout=timedelta(seconds=max(1200,args.eval_timeout+120)))
     output=output_path(args.output)
-    step=0;started=time.monotonic();run=None;stopping=False
+    step=0;started=time.monotonic();run=None;stopping=False;evaluator=None
+    def eval_call(action):
+        error=[None]
+        if rank==0:
+            try:action()
+            except Exception as exc:error[0]=f"{type(exc).__name__}: {exc}"
+        dist.broadcast_object_list(error,src=0)
+        if error[0]:raise RuntimeError(error[0])
     def stop_request(*_):
         nonlocal stopping
         stopping=True
@@ -108,7 +122,8 @@ def main(args):
         accum=args.global_batch//(args.micro*world)
         updates_per_epoch=math.ceil(len(data)/args.global_batch)
         target=args.smoke_updates or args.epochs*updates_per_epoch
-        if start>=target:raise ValueError("checkpoint already reached requested TOTAL target")
+        if start>target or (start==target and not args.async_eval):raise ValueError("checkpoint already reached requested TOTAL target")
+        step=start
         cfg={k:str(v.resolve()) if isinstance(v,Path) else v for k,v in vars(args).items()}
         cfg.update(optimization=recipe,style="bert_fullctx_sparse2d_v1",dim=core.dim,depth=len(core.encoder.layer),
             heads=4 if args.synthetic else 16,dropout=.1,world=world,accumulation=accum,
@@ -143,7 +158,21 @@ def main(args):
         else:torch.manual_seed(args.seed+1000+rank)
         window=torch.zeros(4,device=device);count=0;clipped=0;tick=time.monotonic()
         segment_target = min(target, args.stop_after_epoch * updates_per_epoch) if args.stop_after_epoch else target
-        if segment_target <= start: raise ValueError("segment boundary already reached")
+        if segment_target < start or (segment_target==start and not args.async_eval):
+            raise ValueError("segment boundary already reached")
+        if args.async_eval:
+            def initialize_evaluator():
+                nonlocal evaluator
+                gpus=[x.strip() for x in os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",") if x.strip()]
+                if len(gpus)!=world or len(set(gpus))!=world:
+                    raise ValueError("async eval requires explicit same GPUs as training")
+                evaluator=AsyncEvaluator(output,args.assets_root,gpus,run,batch=args.eval_batch,
+                    seed=args.eval_seed,mode=args.wandb_mode,load_timeout=args.eval_load_timeout,
+                    timeout=args.eval_timeout)
+                if meta and start%updates_per_epoch==0 and (start//updates_per_epoch)%args.eval_every==0:
+                    evaluator.start(meta)
+            eval_call(initialize_evaluator)
+            tick=time.monotonic()
         for step in range(start+1,segment_target+1):
             set_learning_rates(opt,recipe,step)
             opt.zero_grad(set_to_none=True);stats=torch.zeros(4,device=device)
@@ -160,6 +189,8 @@ def main(args):
             dist.all_reduce(stats);window+=stats/world;count+=1
             flag=torch.tensor(int(stopping),device=device);dist.all_reduce(flag,op=dist.ReduceOp.MAX)
             stopping=bool(flag.item())
+            if args.async_eval and (step%10==0 or step==segment_target or stopping):
+                eval_call(lambda:evaluator.poll())
             if step<=start+3 or step%10==0 or step==segment_target or stopping:
                 row=dict(step=step,epoch=step/updates_per_epoch,status="running",loss2d=float(window[0]/count),
                     masked_nll2d=float(window[1]/count),mask_ratio=float(window[2]/count),class_drop_fraction=float(window[3]/count),
@@ -178,14 +209,21 @@ def main(args):
                     if run:run.log(row)
                 window.zero_();count=0;clipped=0;tick=time.monotonic()
             if step%updates_per_epoch==0 or step==segment_target or stopping:
+                if args.async_eval:
+                    # Usually already complete; wait only if evaluation fell behind.
+                    eval_call(lambda:evaluator.finish())
                 rng=[None]*world
                 cuda_rng=torch.cuda.get_rng_state(device) if device.type=="cuda" else torch.empty(0,dtype=torch.uint8)
                 dist.all_gather_object(rng,dict(cpu=torch.get_rng_state(),cuda=cuda_rng))
                 if rank==0:
                     saved=save_latest(output,core,None,opt,rng,dict(step=step,config=cfg,cursor=cursor,init_audit=audit))
                     print(json.dumps(dict(stage="latest",**saved)),flush=True)
-                dist.barrier();tick=time.monotonic()
+                dist.barrier()
+                if args.async_eval and not stopping and step%updates_per_epoch==0 and (step//updates_per_epoch)%args.eval_every==0:
+                    eval_call(lambda:evaluator.start(json.loads((output/"latest.json").read_text())))
+                tick=time.monotonic()
             if stopping:break
+        if args.async_eval:eval_call(lambda:evaluator.finish())
         if not args.synthetic:provider.assert_frozen()
         if rank==0:
             summary=dict(status="interrupted" if stopping else ("awaiting_eval" if step<target else "complete"),step=step,target=target,
@@ -196,7 +234,10 @@ def main(args):
     except BaseException as exc:
         if output.exists():atomic_json(output/f"failure_rank{rank}.json",dict(step=step,error=str(exc),type=type(exc).__name__))
         raise
-    finally:dist.destroy_process_group()
+    finally:
+        try:
+            if evaluator is not None:evaluator.cancel()
+        finally:dist.destroy_process_group()
 
 def parser():
     p=argparse.ArgumentParser(description=__doc__)
@@ -215,6 +256,12 @@ def parser():
     p.add_argument("--wandb-project",default="motar-bert-sparse2d")
     p.add_argument("--wandb-mode",choices=("online","offline","disabled"),default="online")
     p.add_argument("--device",choices=("cuda","cpu"),default="cuda")
+    p.add_argument("--async-eval",action="store_true",help="background FID, same GPUs, no snapshot; enabled by launcher")
+    p.add_argument("--eval-every",type=int,default=1)
+    p.add_argument("--eval-batch",type=int,default=8)
+    p.add_argument("--eval-seed",type=int,default=20260914)
+    p.add_argument("--eval-load-timeout",type=float,default=600)
+    p.add_argument("--eval-timeout",type=float,default=1800)
     p.add_argument("--synthetic",action="store_true")
     p.add_argument("--smoke-updates",type=int,default=0,help="bounded TOTAL target for startup tests, not epochs")
     return p

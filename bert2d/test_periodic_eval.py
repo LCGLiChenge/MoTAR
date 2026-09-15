@@ -110,7 +110,7 @@ class PeriodicTests(unittest.TestCase):
         self.assertEqual(sdk.init.call_args.kwargs["resume"], "must")
         self.assertEqual(run.log.call_args.kwargs, {})
         self.assertEqual(run.log.call_args.args[0]["epoch"], 2)
-        run.define_metric.assert_any_call("eval/*", step_metric="epoch")
+        run.define_metric.assert_any_call("eval/*", step_metric="eval/epoch")
 
 
 if __name__ == "__main__":

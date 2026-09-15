@@ -49,7 +49,7 @@ bash scripts/install_h20_environment.sh --active-env
 # Extra dependencies for ADM-FID (also needed when training env already exists):
 python -m pip install -r requirements-bert2d-eval.txt
 python -m pip check
-USE_TF=0 python -m unittest bert2d.test_model bert2d.test_resume bert2d.test_periodic_eval bert2d.test_optimization
+USE_TF=0 python -m unittest bert2d.test_model bert2d.test_resume bert2d.test_periodic_eval bert2d.test_optimization bert2d.test_async_eval
 ```
 
 The installation script without `--active-env` creates the `motar-h20` conda
@@ -135,46 +135,79 @@ assets and model configuration must match. The launcher rechecks memory.
 Do not substitute the older local 4k/8k probe directory into this formal launcher.
 Use a new `OUTPUT` directory for an independent experiment.
 
-## 4. Automatic 5k FID every two epochs
+## 4. Asynchronous 5k FID every epoch (default)
 
-The default launcher now evaluates at epochs **2, 4, ..., 40** (20 evaluations).
-At each boundary the distributed trainer saves the usual `latest.pt` and exits;
-its GPU memory is released. The same allocated GPUs run paired 5k free-generation
-FID, the results are logged to the **same W&B run**, and training resumes from
-that same latest checkpoint with model/Adam/per-rank RNG/data cursor restored.
-The total target and LR schedule remain 40 epochs; optimizer warmup does not restart.
-There is no evaluation snapshot or additional model checkpoint.
+Default `EVAL_MODE=async EVAL_EVERY=1` evaluates epochs **1, 2, ..., 40**.
+The trainer stays alive; background generation/FID shares its allocated GPUs.
 
-W&B curves (x-axis `epoch`):
+1. Save the usual latest.pt and JSON metadata.
+2. Wait briefly for EVERY evaluation shard to acknowledge loading its own model
+   with the exact checkpoint SHA-256 and step.
+3. Continue training while those fixed models generate paired 5k samples.
+4. Training rank0 logs completed results to its existing W&B run.
+
+No snapshot, extra checkpoint or trainer restart is needed. Evaluation never
+reads live training parameters. The loading handshake is a short pause, not a
+pause for the entire evaluation. GPU compute is shared, so training throughput
+can still decrease during evaluation.
+
+W&B uses `eval/epoch` for evaluation and `step` for training. Delayed results
+never rewind training axes. Older historical FID points may still require the
+old `epoch` axis. Metrics:
 
 - `eval/fid5k_full`: full direct-replacement refinement, the primary metric.
 - `eval/fid5k_base`: paired pure-1D baseline.
 - `eval/fid5k_full_minus_base`: negative means refinement improves FID.
-- `eval/is5k_base`, `eval/is5k_full`: Inception Scores from the same evaluation.
+- `eval/is5k_base`, `eval/is5k_full`: Inception Scores.
+- `eval/checkpoint_step`: evaluated checkpoint step, not current training step.
 
-Training curves retain optimizer `step` as their x-axis. W&B uses its own history
-counter, so an evaluation at an already logged optimizer step is not dropped.
-Default evaluation settings are 5,000 samples, seed20260914, batch8/GPU, raw
-weights, `halton_fixed_margin4`, and all GPUs allocated to this launcher.
-Keep GPU count and eval batch fixed for comparable sampling streams.
-`EVAL_BATCH` can be explicitly reduced if the target GPU cannot fit evaluation;
-`EVAL_EVERY` defaults to2. The evaluation assets and TensorFlow GPU availability
-are checked **before** formal training, not first discovered after two epochs.
+Only the trainer writes W&B. Workers save local artifacts. Defaults remain
+5000 samples, seed20260914, batch8/GPU, raw state, halton_fixed_margin4, and all
+allocated GPUs. Keep shard count, batch and seed fixed for comparable sampling.
+Asset/TensorFlow checks still run before training.
 
-Local results stay under the run's `evaluations/epochXXX_attemptYY/`; only scalar
-metrics are uploaded to W&B, not weights, images or feature arrays. Evaluation
-adds runtime and roughly a few GB of retained feature files over the 40-epoch run.
-`pipeline_status.json` distinguishes training completion from pending evaluation.
-Failed eval/upload blocks further training and leaves `latest.pt` intact. Re-run
-the same launcher to retry the current boundary; a complete matching evaluation
-is reused without regenerating samples. Partial failed attempts are preserved.
+Auto-probe reserves **12 GiB/GPU** for async evaluation plus training safety
+margins; this is not a measured capacity guarantee on every H20. Adjust
+`EVAL_RESERVE_GIB` or `EVAL_BATCH` explicitly if necessary (changing batch changes
+the sampling stream). Global batch remains 448; it is never increased to fill RAM.
 
-For an **already running old launcher**, `git pull` alone does not change its
-running process. Gracefully stop it, wait for its checkpoint save and processes
-to exit, then launch the same output directory with the updated command. This
-resumes the current weights, not fresh training. Because only latest is retained,
-missing earlier-epoch FIDs cannot be retrospectively recovered. Use W&B online
-for a single resumed cloud run; offline mode retains local sessions for manual sync.
+At most one evaluation is in flight. If evaluation falls behind, training waits
+at the next save boundary rather than skipping epochs or accumulating workers.
+The final evaluation drains before training exits. Load/eval/upload failure or
+timeout stops the run with latest retained. Configurable defaults:
+`EVAL_LOAD_TIMEOUT=600`, `EVAL_TIMEOUT=1800` seconds. Increase them explicitly on
+a slower server; do not silently bypass failures.
+
+Local results live in `evaluations/epochXXX_attemptYY/`; only scalars go to W&B,
+not images/weights/features. `async_eval_status.json` tracks worker/checkpoint
+identity. Restart reuses matching complete results and recovers unlogged results;
+failed partial attempts remain. A live previous worker blocks restart. Older
+overwritten checkpoints cannot be evaluated retrospectively. Offline W&B needs
+manual sync. `EVAL_MODE=serial` retains the non-overlapping fallback.
+
+### Update an already-running B448 job
+
+Gracefully stop the old launcher/trainer, wait for its save and ALL eval workers
+to finish/exit, then pull and resume. Never run two trainers in the same output.
+`git pull` cannot hot-update a running process.
+
+```bash
+git pull --ff-only
+# Activate the same environment; restore SAME MOTAR_ASSETS and MOTAR_RESULTS.
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export OUTPUT=/YOUR/DATA/DISK/existing_b448_output
+export EPOCHS=40 GLOBAL_BATCH=448 MICRO=56
+export EVAL_MODE=async EVAL_EVERY=1 EVAL_BATCH=8 EVAL_RESERVE_GIB=12
+export WANDB_MODE=online
+# Keep original BATCH_SCALING, LR and other settings unchanged.
+# e2d597e SDE B448 control: BATCH_SCALING=adamw-sde (default).
+# Pre-scaling checkpoints instead require BATCH_SCALING=legacy.
+bash scripts/launch_bert_sparse2d_40epoch.sh
+```
+
+Resume restores weights/Adam/RNG/data cursor to **40 total epochs**, not 40 more.
+World size/microbatch/optimizer must match. The bounded scaling test still stops
+after one epoch and its evaluation; it does not continue all 40 epochs.
 
 ## 5. Standalone generation and FID
 

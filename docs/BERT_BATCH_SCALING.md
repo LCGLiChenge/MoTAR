@@ -126,8 +126,9 @@ sharding and settings are confirmed identical.
 
 ## Checkpoints and reporting
 
-- Still 40 packed epochs, latest-only each epoch, paired full-refine 5k FID every
-  two epochs, W&B online by default. No change to evaluator or model weights format.
+- Still 40 packed epochs, latest-only each epoch. Current default: paired 5k FID
+  asynchronously every epoch, W&B online; see [the updated guide](BERT_SPARSE2D_40EPOCH.md).
+  Model weights, sampling and FID calculation remain unchanged.
 - `config.json`, `latest.json`, startup `launch.json`, and W&B config include the
   full resolved `optimization` dictionary, not just the reference LR inputs.
 - Curves include both effective LRs, betas, epsilon, WD, clip fraction, processed

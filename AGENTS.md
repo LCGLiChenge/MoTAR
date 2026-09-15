@@ -19,10 +19,14 @@ current user request. Read README.md, docs/BERT_SPARSE2D_40EPOCH.md and
   global-batch change. Run the launcher memory and save/resume gates before
   formal training. No silent NaN/OOM bypass. Keep20GiB free startup headroom.
 - W&B online scalar training curves; no credentials in Git and no log.txt.
-- Every2 epochs, serialized paired5k FID on the same GPUs; release training
-  processes first, log eval/fid5k_full and base to the same W&B run with epoch
-  axis, then restore full state. No extra snapshots or concurrent GPU workers.
-  Eval/upload failures block continuation. Never silently skip an evaluation.
+- Every epoch, asynchronous paired5k FID on the same allocated GPUs. Trainer stays
+  alive: wait only for every shard to acknowledge its exact checkpoint hash/step,
+  then continue training. No snapshot. One evaluation at a time; backpressure
+  if it falls behind, final drain. Trainer rank0 is the only W&B writer, with
+  eval/epoch separate from training step. Reserve 12 GiB/GPU during memory probe.
+  Load/eval/upload failures stop continuation. Never silently skip evaluation.
+  Stop old launcher/workers before pulling and resuming the SAME output. Keep
+  original optimizer/layout settings; git pull does not hot-update processes.
 - Keep only latest.pt per formal run, atomically updated every epoch/end/signal,
   plus small JSON metadata. No numbered/best checkpoints. Verified smoke weights
   are deleted after saving audit metadata. Source assets must not be modified.

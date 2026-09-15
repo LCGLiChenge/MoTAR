@@ -23,7 +23,8 @@ def define_axes(run):
     run.define_metric("step")
     run.define_metric("epoch")
     run.define_metric("*", step_metric="step")
-    run.define_metric("eval/*", step_metric="epoch")
+    run.define_metric("eval/epoch")
+    run.define_metric("eval/*", step_metric="eval/epoch")
 
 
 def metric_row(summary, step, epoch):
@@ -54,6 +55,8 @@ def upload(output, evaluation, mode):
     if summary["checkpoint_sha256"] != record["checkpoint_sha256"]:
         raise ValueError("evaluation checkpoint identity mismatch")
     row = metric_row(summary, record["step"], record["epoch"])
+    row["eval/epoch"] = row["epoch"]
+    row["eval/checkpoint_step"] = row["step"]
     if mode != "disabled":
         import wandb
         identity = read_json(output / "wandb_run.json")

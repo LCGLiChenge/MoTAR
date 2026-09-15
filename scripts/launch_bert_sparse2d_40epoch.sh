@@ -10,8 +10,12 @@ python -m bert2d.launch \
   --output "${OUTPUT:-$MOTAR_RESULTS/bert_sparse2d_40epoch}" \
   --assets-root "$MOTAR_ASSETS" \
   --epochs "${EPOCHS:-40}" \
-  --eval-every "${EVAL_EVERY:-2}" \
+  --eval-every "${EVAL_EVERY:-1}" \
+  --eval-mode "${EVAL_MODE:-async}" \
+  --eval-reserve-gib "${EVAL_RESERVE_GIB:-12}" \
   --eval-batch "${EVAL_BATCH:-8}" \
+  --eval-load-timeout "${EVAL_LOAD_TIMEOUT:-600}" \
+  --eval-timeout "${EVAL_TIMEOUT:-1800}" \
   --global-batch "${GLOBAL_BATCH:-448}" \
   --micro "${MICRO:-0}" \
   --batch-scaling "${BATCH_SCALING:-adamw-sde}" \

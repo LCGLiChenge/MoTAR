@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import selectors
+import signal
 import subprocess
 import sys
 import time
@@ -74,6 +75,8 @@ def shard_command(args, shard_dir: Path, num_shards: int, shard_index: int) -> l
         "--shard-index",
         str(shard_index),
     ]
+    cmd.extend(["--expected-checkpoint-sha256", args._checkpoint_hash,
+                "--expected-checkpoint-step", str(args._checkpoint_step)])
     if args.assets_root_override is not None:
         cmd.extend(["--assets-root-override", str(args.assets_root_override)])
     if args.smoke:
@@ -91,63 +94,79 @@ def launch_shards(args, output: Path, gpus: list[str]) -> None:
     shard_root.mkdir(parents=True, exist_ok=True)
     procs = []
     selector = selectors.DefaultSelector()
-    for shard_index, gpu in enumerate(gpus):
-        shard_dir = shard_root / f"shard_{shard_index:02d}"
-        require(not shard_dir.exists(), f"fresh shard output required: {shard_dir}")
-        env = os.environ.copy()
-        env["CUDA_VISIBLE_DEVICES"] = gpu
-        env.setdefault("USE_TF", "0")
-        env.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
-        cmd = shard_command(args, shard_dir, len(gpus), shard_index)
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(ROOT),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-        procs.append((shard_index, gpu, proc, shard_dir, cmd))
-        selector.register(proc.stdout, selectors.EVENT_READ, (shard_index, gpu))
-        print(json.dumps({"stage": "launch", "shard": shard_index, "gpu": gpu, "pid": proc.pid, "output": str(shard_dir)}), flush=True)
+    try:
+        for shard_index, gpu in enumerate(gpus):
+            shard_dir = shard_root / f"shard_{shard_index:02d}"
+            require(not shard_dir.exists(), f"fresh shard output required: {shard_dir}")
+            env = os.environ.copy()
+            env["CUDA_VISIBLE_DEVICES"] = gpu
+            env.setdefault("USE_TF", "0")
+            env.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
+            cmd = shard_command(args, shard_dir, len(gpus), shard_index)
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(ROOT),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            procs.append((shard_index, gpu, proc, shard_dir, cmd))
+            selector.register(proc.stdout, selectors.EVENT_READ, (shard_index, gpu))
+            print(json.dumps({"stage": "launch", "shard": shard_index, "gpu": gpu, "pid": proc.pid, "output": str(shard_dir)}), flush=True)
 
-    alive = {proc.pid for _, _, proc, _, _ in procs}
-    last_heartbeat = time.monotonic()
-    failed = None
-    while alive:
-        for key, _ in selector.select(timeout=5.0):
-            line = key.fileobj.readline()
-            if line:
-                shard_index, gpu = key.data
-                print(json.dumps({"stage": "shard_log", "shard": shard_index, "gpu": gpu, "line": line.rstrip()}), flush=True)
-        for shard_index, gpu, proc, shard_dir, cmd in procs:
-            if proc.pid not in alive:
-                continue
-            code = proc.poll()
-            if code is None:
-                continue
-            alive.remove(proc.pid)
-            if proc.stdout is not None:
-                try:
-                    selector.unregister(proc.stdout)
-                except Exception:
-                    pass
-                for line in proc.stdout:
+        alive = {proc.pid for _, _, proc, _, _ in procs}
+        last_heartbeat = time.monotonic()
+        failed = None
+        while alive:
+            for key, _ in selector.select(timeout=5.0):
+                line = key.fileobj.readline()
+                if line:
+                    shard_index, gpu = key.data
                     print(json.dumps({"stage": "shard_log", "shard": shard_index, "gpu": gpu, "line": line.rstrip()}), flush=True)
-            print(json.dumps({"stage": "exit", "shard": shard_index, "gpu": gpu, "pid": proc.pid, "returncode": code}), flush=True)
-            if code != 0 and failed is None:
-                failed = (shard_index, gpu, code, cmd)
-        if failed is not None:
-            for _, _, proc, _, _ in procs:
-                if proc.poll() is None:
-                    proc.terminate()
-            raise RuntimeError(f"shard {failed[0]} on GPU {failed[1]} failed with code {failed[2]}")
-        now = time.monotonic()
-        if now - last_heartbeat > 60:
-            running = [dict(shard=i, gpu=g, pid=p.pid) for i, g, p, _, _ in procs if p.poll() is None]
-            print(json.dumps({"stage": "heartbeat", "running": running}), flush=True)
-            last_heartbeat = now
+            for shard_index, gpu, proc, shard_dir, cmd in procs:
+                if proc.pid not in alive:
+                    continue
+                code = proc.poll()
+                if code is None:
+                    continue
+                alive.remove(proc.pid)
+                if proc.stdout is not None:
+                    try:
+                        selector.unregister(proc.stdout)
+                    except Exception:
+                        pass
+                    for line in proc.stdout:
+                        print(json.dumps({"stage": "shard_log", "shard": shard_index, "gpu": gpu, "line": line.rstrip()}), flush=True)
+                print(json.dumps({"stage": "exit", "shard": shard_index, "gpu": gpu, "pid": proc.pid, "returncode": code}), flush=True)
+                if code != 0 and failed is None:
+                    failed = (shard_index, gpu, code, cmd)
+            if failed is not None:
+                for _, _, proc, _, _ in procs:
+                    if proc.poll() is None:
+                        proc.terminate()
+                raise RuntimeError(f"shard {failed[0]} on GPU {failed[1]} failed with code {failed[2]}")
+            now = time.monotonic()
+            if now - last_heartbeat > 60:
+                running = [dict(shard=i, gpu=g, pid=p.pid) for i, g, p, _, _ in procs if p.poll() is None]
+                print(json.dumps({"stage": "heartbeat", "running": running}), flush=True)
+                last_heartbeat = now
+    finally:
+        selector.close()
+        for _, _, proc, _, _ in procs:
+            if proc.poll() is None:
+                proc.terminate()
+        survivors=[]
+        for _, _, proc, _, _ in procs:
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                survivors.append(proc.pid)
+            if proc.stdout is not None:
+                proc.stdout.close()
+        if survivors:
+            raise RuntimeError(f"eval children did not terminate: {survivors}")
 
 
 def merge_shards(args, output: Path, gpus: list[str]) -> dict:
@@ -254,11 +273,14 @@ def merge_shards(args, output: Path, gpus: list[str]) -> dict:
 
 def main(args: argparse.Namespace) -> None:
     global REFERENCE, GRAPH
+    def interrupted(signum, _frame):
+        raise SystemExit(128+signum)
+    signal.signal(signal.SIGTERM,interrupted)
+    signal.signal(signal.SIGINT,interrupted)
     asset_root = Path(args.assets_root_override or ASSETS).resolve()
     REFERENCE = asset_root / "fid/VIRTUAL_imagenet256_labeled.npz"
     GRAPH = asset_root / "fid/classify_image_graph_def.pb"
     from .assets import FID, check
-    for spec in FID: check(asset_root / spec["local_path"], spec)
     args._started = time.monotonic()
     output = output_path(args.output)
     require(output.is_relative_to(RESULT_ROOT.resolve()) and output != RESULT_ROOT.resolve(), "output must be under approved result root")
@@ -275,7 +297,14 @@ def main(args: argparse.Namespace) -> None:
     gpus = parse_gpus(args.gpus)
     args.variants = args.variants or ["halton_fixed_margin4"]
     output.mkdir(parents=True)
+    meta = json.loads((args.checkpoint / "latest.json").read_text())
     args._checkpoint_hash = digest(args.checkpoint / "latest.pt")
+    args._checkpoint_step = int(meta["step"])
+    require(meta["sha256"] == args._checkpoint_hash, "latest metadata/hash mismatch")
+    if args.expected_checkpoint_sha256 is not None:
+        require(args._checkpoint_hash == args.expected_checkpoint_sha256, "requested checkpoint was replaced")
+    if args.expected_checkpoint_step is not None:
+        require(args._checkpoint_step == args.expected_checkpoint_step, "requested checkpoint step changed")
     atomic_json(output / "manifest.json", dict(
         format="bert_sparse2d_sharded_free_fid_v1",
         n=args.n,
@@ -295,6 +324,8 @@ def main(args: argparse.Namespace) -> None:
         launched_at=time.strftime("%Y-%m-%d %H:%M:%S %z"),
     ))
     launch_shards(args, output, gpus)
+    # Shards already verified these assets; verify again before merge, outside the ACK wait.
+    for spec in FID: check(asset_root / spec["local_path"], spec)
     merge_shards(args, output, gpus)
 
 
@@ -303,6 +334,8 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--state", choices=("raw",), default="raw")
+    parser.add_argument("--expected-checkpoint-sha256")
+    parser.add_argument("--expected-checkpoint-step", type=int)
     parser.add_argument("--n", type=int, default=5000)
     parser.add_argument("--gpus", required=True, help="comma-separated GPU ids, one shard per GPU")
     parser.add_argument("--batch", type=int, default=8)

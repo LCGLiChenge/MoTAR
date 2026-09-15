@@ -95,7 +95,6 @@ def main(args):
     REFERENCE = asset_root / "fid/VIRTUAL_imagenet256_labeled.npz"
     GRAPH = asset_root / "fid/classify_image_graph_def.pb"
     from .assets import FID, check
-    for spec in FID: check(asset_root / spec["local_path"], spec)
     output = output_path(args.output)
     require(output.is_relative_to(RESULT_ROOT.resolve()) and output != RESULT_ROOT.resolve(), "output must be under approved result root")
     require(not output.exists(), "fresh output required")
@@ -120,6 +119,18 @@ def main(args):
     output.mkdir(parents=True)
 
     model, model_audit = load_model(args.checkpoint, args.state, args.device, assets_root_override=args.assets_root_override)
+    expected_hash = getattr(args, "expected_checkpoint_sha256", None)
+    expected_step = getattr(args, "expected_checkpoint_step", None)
+    if expected_hash is not None:
+        require(model_audit["sha256"] == expected_hash, "wrong requested checkpoint hash")
+    if expected_step is not None:
+        require(model_audit["step"] == expected_step, "wrong requested checkpoint step")
+    if args.device.startswith("cuda"):
+        torch.cuda.synchronize()
+    # load_state_dict copies into model storage; no file-backed tensor is used after this ACK.
+    atomic_json(output / "checkpoint_loaded.json", model_audit)
+    # Asset verification is still mandatory, but not part of the weight-load handshake.
+    for spec in FID: check(asset_root / spec["local_path"], spec)
     assets = FrozenAssets(Path(model_audit["assets_root"]), args.device, chunk=args.feature_chunk)
 
     manifest = dict(
@@ -264,6 +275,8 @@ if __name__ == "__main__":
     p.add_argument("--checkpoint", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--state", choices=("raw",), default="raw")
+    p.add_argument("--expected-checkpoint-sha256")
+    p.add_argument("--expected-checkpoint-step", type=int)
     p.add_argument("--n", type=int, default=32)
     p.add_argument("--batch", type=int, default=8)
     p.add_argument("--feature-batch", type=int, default=8)

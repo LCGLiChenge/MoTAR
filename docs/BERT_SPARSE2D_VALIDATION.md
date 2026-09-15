@@ -49,3 +49,9 @@ are already public and listed in the download manifest.
   resume to8. All180 saved model/Adam/per-rank RNG tensors match exactly; both
   checkpoints have SHA-256 `60b0c19f78fce655bbcc136ba51faa8491e0ed30486f0261add440f2ddcef73a`.
   Smoke weights were removed after verification; metadata and cleanup manifest remain.
+
+## Per-epoch asynchronous update
+
+See [asynchronous validation](BERT_ASYNC_EVAL_VALIDATION.md) for the current
+per-epoch concurrent implementation. The serialized-every-two-epochs section
+above describes the earlier release, not the current launcher default.

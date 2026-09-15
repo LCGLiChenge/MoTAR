@@ -33,11 +33,14 @@ numbered/best checkpoints. Existing output resumes to the same total target.
 update and source-image-equivalent counts. All downloads have hash checks.
 No unpublished local checkpoint or validation cache is needed.
 
-**Automatic evaluation:** every2 completed epochs (2,4,…,40), run paired5k FID
-on the same allocated GPUs and log base/full-refine FID to the same W&B run.
-Training pauses and releases GPU memory for eval, then resumes full state from
-latest; no extra checkpoints. See the guide for failure recovery and updating
-an already-running launcher.
+**Automatic evaluation:** paired 5k FID **every completed epoch (1–40)**,
+**asynchronously while training continues**, on the same allocated GPUs. Results
+are logged to the same W&B run with the separate `eval/epoch` axis.
+Only latest.pt is retained: wait briefly for every shard to load/acknowledge the
+checkpoint, then continue training during evaluation. No snapshot or trainer
+restart per epoch. At most one eval; backpressure if it falls behind; final drain.
+Auto-probe reserves 12 GiB/GPU for eval. See the guide for memory limits, failure
+recovery, and safely stopping/updating/resuming an existing B448 job.
 
 [Packaging validation and limitations](docs/BERT_SPARSE2D_VALIDATION.md).
 This short-run model has not yet beaten the pure-1D baseline; publication makes

@@ -1,6 +1,23 @@
-# MoTAR — current handoff: BERT sparse 2D-only, 40 epochs
+# Current requested experiment: dense proxy MaskGIT, 6000 → 20000 steps
 
-The latest requested run is **TiTok-initialized BERT sparse 2D-only**, not the
+The 2026-09-16 request is a **continuation**, not a fresh40-epoch or unified run.
+Convert frozen1D features to nearest2D codebook IDs; a single2D BERT sees
+`[class | 256 grid tokens]` and generates **only Router-selected positions**.
+Decode by **direct replacement**, retaining continuous base features elsewhere.
+
+Read [the complete H20 guide](docs/DENSE_PROXY_GRID_H20_20000.md), then run
+`scripts/launch_dense_proxy_grid_h20_20000.sh`: **8H20, global448, total20k steps,
+5k FID at8k/12k/16k/20k, rolling latest.pt only**.
+Weights: [Chloeeeeeeee123/MoT-1](https://huggingface.co/Chloeeeeeeee123/MoT-1/tree/main/checkpoints/dense_proxy_grid_maskgit_step6000_20260916).
+The downloader can wait for publication without allocating GPUs, then pins
+one HF commit and verifies SHA256. Source6000 fullFID5k50.34 is worse than
+pure1D10.87; packaging is not a quality claim.
+
+---
+
+# Previous handoff: BERT sparse 2D-only, 40 epochs
+
+The previous requested run was **TiTok-initialized BERT sparse 2D-only**, not the
 older unified model below. It takes the complete frozen 1D 16×16 feature grid,
 generates only Router-selected 2D tokens, and directly replaces selected regions.
 

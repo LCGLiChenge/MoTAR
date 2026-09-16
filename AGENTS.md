@@ -1,4 +1,24 @@
-# Latest handoff override — BERT sparse 2D-only, 40 epochs (2026-09-15)
+# Latest explicit request — dense proxy grid continuation (2026-09-16)
+
+Read README.md and docs/DENSE_PROXY_GRID_H20_20000.md for this run.
+User authorized H20 GPUs0..7, continuation from exact6000 to20000 total steps.
+Entrypoint: scripts/launch_dense_proxy_grid_h20_20000.sh. Global448=8x56;
+restore model/Adam/cursor, same LR, no warmup restart. HF sourceSHA is pinned
+in configs/dense_proxy_grid_h20.json. No fresh/unified model substitution.
+Use nearest projected-codebook anchors, NOT the learned GAN converter.
+Only selected2D replaces continuous1D features; no half blending.
+Pause at8k/12k/16k/20k for5k FID. Rolling latest every500 updates/end only;
+no snapshots/numbered ckpt. Delete downloaded input6000 after verified8k
+save+resume+eval, but preserve original5090/HF source. Keep formal results;
+delete smoke feature arrays after checks. Local JSON, no W&B/log.txt for
+this bounded probe; older40-epoch W&B defaults below remain unchanged.
+CPU tests are not proof of8-GPU success. Run real2-update save/resume and8-image
+smoke before continuing. Stop on failure; never preempt another GPU task or
+blindly rerun a fresh pipeline into an existing output.
+
+---
+
+# Previous handoff override — BERT sparse 2D-only, 40 epochs (2026-09-15)
 
 This section supersedes all older default-launch instructions below for the
 current user request. Read README.md, docs/BERT_SPARSE2D_40EPOCH.md and

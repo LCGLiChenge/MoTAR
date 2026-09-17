@@ -11,7 +11,7 @@ python_bin="${PYTHON_BIN:-/root/data/heyuanyu/yefei/lichenge/MoTAR/.venv/bin/pyt
 run_name="${RUN_NAME:-proxy_converter_1k_seed20260917}"
 exec "$python_bin" experiments/feature_to_token_20260916/train_proxy_converter.py \
   --assets-root "$MOTAR_ASSETS" \
-  --model "${MODEL:-full}" --rank "${RANK:-24}" \
+  --model "${MODEL:-full}" --rank "${MAPPER_RANK:-24}" \
   --proxy-root "${PROXY_ROOT:-/root/data/heyuanyu/yefei/lichenge/MoTAR_rgb_proxy_cache_20260916/train}" \
   --output "$MOTAR_RESULTS/$run_name" \
   --steps "${STEPS:-1000}" --batch "${BATCH:-768}" \

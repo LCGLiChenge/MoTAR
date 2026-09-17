@@ -167,6 +167,8 @@ def run(args) -> None:
     rank = int(os.getenv("RANK", "0"))
     world = int(os.getenv("WORLD_SIZE", "1"))
     local = int(os.getenv("LOCAL_RANK", "0"))
+    require(world > 0 and 0 <= rank < world,
+            "invalid distributed rank; do not use RANK for the mapper factor rank")
     require(args.steps > 0 and args.batch > 0 and args.eval_batch > 0, "positive sizes required")
     require(args.eval_sources > 0, "positive eval source count required")
     torch.set_num_threads(4)

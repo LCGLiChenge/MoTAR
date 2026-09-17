@@ -58,18 +58,18 @@ export PROXY_ROOT=/persistent/data/rgb_proxy_train
 export PYTHON_BIN=python
 export CUDA_VISIBLE_DEVICES=0
 
-MODEL=full RANK=12 BATCH=512 STEPS=1000 \
+MODEL=full MAPPER_RANK=12 BATCH=512 STEPS=1000 \
 RUN_NAME=proxy_converter_full_1k_seed20260917 \
 bash scripts/launch_proxy_converter_h20.sh
 ```
 
-The `RANK` value is ignored by `MODEL=full`.  W&B project defaults to
+The `MAPPER_RANK` value is ignored by `MODEL=full`.  W&B project defaults to
 `motar-proxy-converter`.  The trainer saves only `latest.pt` plus JSON audit
 sidecars and refuses to overwrite an existing output directory.
 
 ## Low-rank candidate
 
-`MODEL=lowrank RANK=12` factorizes the 256-to-16384 classifier.  It has 691,712
+`MODEL=lowrank MAPPER_RANK=12` factorizes the 256-to-16384 classifier.  It has 691,712
 parameters, an 85.2% reduction from the full mapper.  The frozen LlamaGen
 codebook originates in 8 dimensions before the affine post-quant projection;
 rank 12 therefore preserves the initial nearest-codeword geometry with numeric
@@ -77,7 +77,7 @@ headroom.  This candidate must not be described as quality-equivalent until its
 paired FID has been measured.
 
 ```bash
-MODEL=lowrank RANK=12 BATCH=512 STEPS=1000 \
+MODEL=lowrank MAPPER_RANK=12 BATCH=512 STEPS=1000 \
 RUN_NAME=proxy_converter_lowrank12_1k_seed20260917 \
 bash scripts/launch_proxy_converter_h20.sh
 ```

@@ -29,6 +29,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 from bert2d.paths import ASSETS, atomic_json, output_path, sha256
 from experiments.feature_to_token_20260916.converter import FeatureTokenConverter
+from experiments.feature_to_token_20260916.converter_codebook import CodebookFeatureTokenConverter
 from experiments.feature_to_token_20260916.converter_lowrank import LowRankFeatureTokenConverter
 from experiments.feature_to_token_20260916.probe import nearest
 from h20_joint.assets import FrozenAssets
@@ -59,6 +60,23 @@ def flat_rows(source: np.ndarray) -> np.ndarray:
     result = np.empty(len(source) * NUM_AUG, dtype=np.int64)
     result[0::2] = source * NUM_AUG
     result[1::2] = source * NUM_AUG + 1
+    return result
+
+
+def training_order(rows: np.ndarray, count: int, seed: int,
+                   repeat: bool) -> np.ndarray:
+    """Build deterministic per-pass shuffles without replacement within a pass."""
+    require(count > 0, "positive training sample count required")
+    if not repeat:
+        require(count <= len(rows), "pilot requires no-replacement training rows")
+    rng = np.random.default_rng(seed)
+    result = np.empty(count, dtype=np.int64)
+    offset = 0
+    while offset < count:
+        permutation = rng.permutation(rows)
+        take = min(len(permutation), count - offset)
+        result[offset:offset + take] = permutation[:take]
+        offset += take
     return result
 
 
@@ -203,8 +221,7 @@ def run(args) -> None:
     eval_rows = flat_rows(chosen_eval_sources)
     train_rows = flat_rows(train_sources)
     sample_count = args.steps * args.batch * world
-    require(sample_count <= len(train_rows), "pilot requires no-replacement training rows")
-    order = np.random.default_rng(args.seed).choice(train_rows, sample_count, replace=False)
+    order = training_order(train_rows, sample_count, args.seed, args.repeat_train_rows)
 
     frozen = FrozenAssets(args.assets_root, "cpu", chunk=args.batch)
     quantizer = frozen.native.quantize.to(device)
@@ -212,14 +229,21 @@ def run(args) -> None:
     projection = frozen.shell.llamagen_vq.post_quant_conv
     with torch.no_grad():
         embedding = frozen.shell.llamagen_vq.quantize.get_codebook_entry(torch.arange(VOCABULARY))
-        book = projection(embedding.T[None, :, None]).squeeze(0).squeeze(1).T.contiguous().to(device)
+        book = projection(embedding.T[None, :, None]).squeeze(0).squeeze(1).T.contiguous()
     if args.model == "full":
-        core = FeatureTokenConverter().to(device)
+        core = FeatureTokenConverter()
         model_format = FORMAT
-    else:
-        core = LowRankFeatureTokenConverter(rank=args.rank).to(device)
+        core.initialize_nearest(book)
+    elif args.model == "lowrank":
+        core = LowRankFeatureTokenConverter(rank=args.rank)
         model_format = "feature_proxy_token_converter_lowrank_v1"
-    core.initialize_nearest(book)
+        core.initialize_nearest(book)
+    else:
+        core = CodebookFeatureTokenConverter()
+        model_format = "feature_proxy_token_converter_codebook_v1"
+        core.initialize_codebook(embedding, projection)
+    core = core.to(device)
+    book = book.to(device)
     optimizer = torch.optim.AdamW(core.parameters(), lr=args.lr, betas=(0.9, 0.999), weight_decay=0.01)
     model = DDP(core, device_ids=[local], broadcast_buffers=False) if world > 1 else core
 
@@ -235,16 +259,22 @@ def run(args) -> None:
         "eval_seed": args.eval_seed, "eval_sources": args.eval_sources,
         "eval_rows_sha256": hashlib.sha256(eval_rows.tobytes()).hexdigest(),
         "train_rows_sha256": hashlib.sha256(order.tobytes()).hexdigest(),
-        "train_samples": sample_count, "precision": "frozen FP32 noTF32; mapper BF16",
-        "init": ("exact projected-codeword squared-distance logits" if args.model == "full" else
-                 f"rank-{args.rank} truncated SVD of projected-codeword logits") +
-                " plus zero-init spatial residual",
+        "train_samples": sample_count, "repeat_train_rows": args.repeat_train_rows,
+        "train_row_passes": sample_count / len(train_rows),
+        "save_every": args.save_every, "keep_steps": sorted(args.keep_steps),
+        "precision": "frozen FP32 noTF32; mapper BF16",
+        "init": ({"full": "exact projected-codeword squared-distance logits",
+                  "lowrank": f"rank-{args.rank} truncated SVD of projected-codeword logits",
+                  "codebook": "post-quant affine pseudoinverse into fixed native 8D codebook"}
+                 [args.model]) + " plus zero-init spatial residual",
         "parameters": sum(parameter.numel() for parameter in core.parameters()),
         "model_config": core.config, "frozen_audit": frozen.audit, "data_audit": data_audit,
         "source_sha256": {Path(__file__).name: sha256(Path(__file__)),
-                          ("converter.py" if args.model == "full" else "converter_lowrank.py"):
+                          ( {"full": "converter.py", "lowrank": "converter_lowrank.py",
+                             "codebook": "converter_codebook.py"}[args.model]):
                           sha256(Path(__file__).with_name(
-                              "converter.py" if args.model == "full" else "converter_lowrank.py"))},
+                              {"full": "converter.py", "lowrank": "converter_lowrank.py",
+                               "codebook": "converter_codebook.py"}[args.model]))},
         "smoke": args.smoke,
     }
     if rank == 0:
@@ -331,6 +361,21 @@ def run(args) -> None:
             print(json.dumps(record), flush=True)
         if step % args.eval_every == 0 or step == args.steps:
             last_eval = publish_eval(step)
+        checkpoint_due = args.save_every > 0 and step % args.save_every == 0
+        keep_due = step in args.keep_steps
+        if step < args.steps and (checkpoint_due or keep_due):
+            if world > 1:
+                dist.barrier()
+            if rank == 0:
+                receipt = save_checkpoint(out, core, optimizer, step, config, args.smoke)
+                if keep_due and not args.smoke:
+                    kept = out / f"step{step:06d}.pt"
+                    require(not kept.exists(), f"refusing to overwrite milestone: {kept}")
+                    os.link(out / "latest.pt", kept)
+                    atomic_json(out / f"step{step:06d}.json",
+                                dict(receipt, path=kept.name))
+            if world > 1:
+                dist.barrier()
         atomic_json(status, {"status": "running", "pid": os.getpid(), "rank": rank,
                     "step": step, "seconds": time.monotonic() - started,
                     "peak_reserved_gib": torch.cuda.max_memory_reserved(device) / 1024**3})
@@ -362,7 +407,7 @@ def run(args) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--assets-root", type=Path, default=ASSETS)
-    parser.add_argument("--model", choices=("full", "lowrank"), default="full")
+    parser.add_argument("--model", choices=("full", "lowrank", "codebook"), default="full")
     parser.add_argument("--rank", type=int, default=24)
     parser.add_argument("--proxy-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -378,6 +423,10 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--warmup", type=int, default=50)
     parser.add_argument("--log-every", type=int, default=20)
+    parser.add_argument("--repeat-train-rows", action="store_true")
+    parser.add_argument("--save-every", type=int, default=0)
+    parser.add_argument("--keep-steps", type=lambda value: {
+        int(item) for item in value.split(",") if item}, default=set())
     parser.add_argument("--memory-fraction", type=float, default=0.92)
     parser.add_argument("--min-free-gib", type=float, default=75.0)
     parser.add_argument("--max-seconds", type=float, default=3600)

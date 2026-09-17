@@ -26,6 +26,7 @@ from experiments.feature_to_token_20260916.halton_official_completion import sam
 from experiments.feature_to_token_20260916.halton_parallel_eval import worker_batches
 from experiments.feature_to_token_20260916.e117_parent_only import install_parent_only
 from experiments.feature_to_token_20260916.converter import FeatureTokenConverter
+from experiments.feature_to_token_20260916.converter_codebook import CodebookFeatureTokenConverter
 from experiments.feature_to_token_20260916.converter_lowrank import LowRankFeatureTokenConverter
 
 
@@ -57,10 +58,20 @@ def main(args):
     if args.mapper_checkpoint is not None:
         mapper_digest=sha256(args.mapper_checkpoint)
         mapper_state=torch.load(args.mapper_checkpoint,map_location='cpu',mmap=True,weights_only=True)
-        if mapper_state.get('format') not in ('feature_proxy_token_converter_v1', 'feature_proxy_token_converter_lowrank_v1'):
+        if mapper_state.get('format') not in ('feature_proxy_token_converter_v1',
+                                               'feature_proxy_token_converter_lowrank_v1',
+                                               'feature_proxy_token_converter_codebook_v1'):
             raise RuntimeError('wrong mapper checkpoint format')
-        mapper_class=(LowRankFeatureTokenConverter if mapper_state['format'].endswith('lowrank_v1') else FeatureTokenConverter)
+        mapper_class=({'feature_proxy_token_converter_v1': FeatureTokenConverter,
+                       'feature_proxy_token_converter_lowrank_v1': LowRankFeatureTokenConverter,
+                       'feature_proxy_token_converter_codebook_v1': CodebookFeatureTokenConverter}
+                      [mapper_state['format']])
         mapper=mapper_class(**mapper_state['model_config'])
+        if mapper_state['format'].endswith('codebook_v1'):
+            native=assets.shell.llamagen_vq.quantize.get_codebook_entry(
+                torch.arange(16384,device=device))
+            mapper=mapper.to(device)
+            mapper.initialize_codebook(native,assets.shell.llamagen_vq.post_quant_conv)
         mapper.load_state_dict(mapper_state['model'],strict=True)
         mapper=mapper.to(device).eval().requires_grad_(False)
         mapper_config=mapper_state['train_config']

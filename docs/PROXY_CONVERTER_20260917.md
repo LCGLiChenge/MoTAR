@@ -67,14 +67,30 @@ The `MAPPER_RANK` value is ignored by `MODEL=full`.  W&B project defaults to
 `motar-proxy-converter`.  The trainer saves only `latest.pt` plus JSON audit
 sidecars and refuses to overwrite an existing output directory.
 
-## Low-rank candidate
+## Validated low-rank mapper
 
 `MODEL=lowrank MAPPER_RANK=12` factorizes the 256-to-16384 classifier.  It has 691,712
 parameters, an 85.2% reduction from the full mapper.  The frozen LlamaGen
 codebook originates in 8 dimensions before the affine post-quant projection;
 rank 12 therefore preserves the initial nearest-codeword geometry with numeric
-headroom.  This candidate must not be described as quality-equivalent until its
-paired FID has been measured.
+headroom.
+
+The 1,000-update H20 run completed in 4,004.79 seconds with 44.92 GiB peak
+reserved memory.  Its final held-out NLL/accuracy were 3.736962/0.196678.  The
+8.31 MB checkpoint has SHA256
+`7f76e4f1bbe0558a659f82345b17b712485bc67ad6daf7475bbe836a089836e0`.
+
+Strict paired generation results:
+
+| proxy condition | parameters | FID-5k | FID-50k |
+|---|---:|---:|---:|
+| exact RGB -> frozen encoder | n/a | 7.668903 | 1.939918 |
+| learned full mapper | 4,686,336 | 7.683637 | 1.976907 |
+| learned rank-12 mapper | 691,712 | 7.663473 | 1.993028 |
+
+The rank-12 mapper saves 85.2% of mapper parameters for +0.016121 FID versus
+the full mapper at 50k.  Its small 5k advantage is not treated as a quality
+improvement; the 50k result is the primary comparison.
 
 ```bash
 MODEL=lowrank MAPPER_RANK=12 BATCH=512 STEPS=1000 \

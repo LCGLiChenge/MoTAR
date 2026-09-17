@@ -1,5 +1,9 @@
 # Current requested experiment: dense proxy MaskGIT, 6000 → 20000 steps
 
+The verified 1D-feature → RGB-reencoded 2D proxy mapper, its paired 5k/50k
+FID results, reproducible H20 commands, and the rank-12 lightweight candidate
+are documented in [docs/PROXY_CONVERTER_20260917.md](docs/PROXY_CONVERTER_20260917.md).
+
 The 2026-09-16 request is a **continuation**, not a fresh40-epoch or unified run.
 Convert frozen1D features to nearest2D codebook IDs; a single2D BERT sees
 `[class | 256 grid tokens]` and generates **only Router-selected positions**.

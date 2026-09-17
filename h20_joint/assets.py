@@ -14,7 +14,7 @@ def load_vendor():
 
 
 class FrozenAssets:
-    def __init__(self,root,device='cuda',chunk=4):
+    def __init__(self,root,device='cuda',chunk=4,keep_encoder=False):
         root=Path(root);self.device=torch.device(device);self.chunk=int(chunk)
         if self.chunk<1:raise ValueError('positive frozen chunk required')
         needed=('weights/mot_latest.pt','weights/tokenizer_titok_l32.bin','router/e117.pt')
@@ -57,7 +57,8 @@ class FrozenAssets:
         # These encoders are not used: training consumes packed codes, while
         # fusion's teacher is decoded from the SAME generated1D prefix.
         native.encoder=nn.Identity();native.latent_tokens=None
-        vq.encoder=nn.Identity();vq.quant_conv=nn.Identity()
+        if not keep_encoder:
+            vq.encoder=nn.Identity();vq.quant_conv=nn.Identity()
         self.native=native.to(device).eval().requires_grad_(False)
         shell=nn.Module();shell.titok=nn.Module();shell.titok.quantize=self.native.quantize
         shell.latent_decoder=trunk;shell.llamagen_vq=vq

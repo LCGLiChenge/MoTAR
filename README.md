@@ -1,4 +1,12 @@
-# Current requested experiment: dense proxy MaskGIT, 6000 → 20000 steps
+# Calibrated no-`x_base` Router + mapper-conditioned Halton fine-tune
+
+The tested 8-H20, 4k-step version, exact 50k FID result, and replay commands
+are in [the experiment record](docs/NOX_MAPPER_BUDGET88_HALTON_20260918.md).
+This is a sparse 2D-only MaskGIT fine-tune, not a unified 1D+2D model.
+
+---
+
+# Previous requested experiment: dense proxy MaskGIT, 6000 → 20000 steps
 
 The verified 1D-feature → RGB-reencoded 2D proxy mapper, its paired 5k/50k
 FID results, reproducible H20 commands, and the rank-12 lightweight candidate

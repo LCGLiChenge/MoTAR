@@ -25,6 +25,7 @@ from experiments.feature_to_token_20260916.halton_proxy import HaltonProxy
 from experiments.feature_to_token_20260916.halton_official_completion import sample_halton_completion
 from experiments.feature_to_token_20260916.halton_parallel_eval import worker_batches
 from experiments.feature_to_token_20260916.e117_parent_only import install_parent_only
+from experiments.feature_to_token_20260916.e117_no_xbase import install_no_xbase
 from experiments.feature_to_token_20260916.converter import FeatureTokenConverter
 from experiments.feature_to_token_20260916.converter_codebook import CodebookFeatureTokenConverter
 from experiments.feature_to_token_20260916.converter_lowrank import LowRankFeatureTokenConverter
@@ -83,7 +84,11 @@ def main(args):
                           step=int(mapper_state['step']),format=mapper_state['format'],
                           parameters=sum(p.numel() for p in mapper.parameters()))
         del mapper_state
-    if args.router_mode == 'parent-only':
+    if args.router_mode == 'no-xbase':
+        if args.router_proxy_checkpoint is None:
+            raise ValueError('no-xbase Router requires --router-proxy-checkpoint')
+        router_audit=install_no_xbase(assets,args.router_proxy_checkpoint)
+    elif args.router_mode == 'parent-only':
         router_audit=install_parent_only(assets)
     else:
         router_audit={'mode':'e117','parameters':sum(p.numel() for p in assets.adapter.student.parameters())}
@@ -115,6 +120,7 @@ def main(args):
     atomic_json(out/f'manifest_shard{shard_id}.json',manifest)
     arms=('base','full_refine')
     completed_count=0
+    route_k64=route_k128=0
     with torch.inference_mode(),tf.Session(config=cfg) as session:
         evaluator=module.Evaluator(session,batch_size=8)
         gpu_checked=False
@@ -129,7 +135,10 @@ def main(args):
                     z1=ImageBert.generate(view,condition=labels,**ONE_D)
                 bundle=assets.bundle(z1)
                 base,index,valid=(bundle[k] for k in ('base','index','valid'))
-                if not bool(((valid.sum(1)==64)|(valid.sum(1)==128)).all()): raise RuntimeError('unexpected router budget')
+                route_counts=valid.sum(1)
+                if not bool(((route_counts==64)|(route_counts==128)).all()): raise RuntimeError('unexpected router budget')
+                route_k64+=int((route_counts==64).sum())
+                route_k128+=int((route_counts==128).sum())
                 selected=torch.zeros(len(ids),256,dtype=torch.bool,device=device)
                 rows=torch.arange(len(ids),device=device)[:,None].expand_as(index)
                 selected[rows[valid],index[valid]]=True
@@ -171,10 +180,12 @@ def main(args):
                 completed_count+=len(ids)
                 offset+=len(ids)
                 atomic_json(status_path,dict(status='running',completed=completed_count,total=len(ids_all),
+                    k64=route_k64,k128=route_k128,
                     seconds=time.monotonic()-started,peak_reserved_gib=torch.cuda.max_memory_reserved()/1024**3))
             for pool in pools.values(): pool.flush()
             result=dict(status='complete',shard=shard,n=len(ids_all),ids=ids_all.tolist(),step=step,
                 checkpoint_sha256=digest,anchors_unchanged=True,seconds=time.monotonic()-started,
+                route_counts=dict(n=completed_count,k64=route_k64,k128=route_k128),
                 peak_reserved_gib=torch.cuda.max_memory_reserved()/1024**3,
                 hashes={name:sha256(out/f'{name}_shard{shard}.npy') for name in arms})
             atomic_json(out/f'shard{shard}.json',result)
@@ -191,7 +202,8 @@ if __name__=='__main__':
     p.add_argument('--seed',type=int,default=20260914)
     p.add_argument('--cfg-w',type=float,default=1.5)
     p.add_argument('--stage2-steps',type=int,choices=(1,2,4,6,8,16,32),default=32)
-    p.add_argument('--router-mode',choices=('e117','parent-only'),default='e117')
+    p.add_argument('--router-mode',choices=('e117','parent-only','no-xbase'),default='e117')
+    p.add_argument('--router-proxy-checkpoint',type=Path)
     p.add_argument('--mapper-checkpoint',type=Path)
     p.add_argument('--worker-shard',type=int,choices=range(8),required=True)
     p.add_argument('--worker-count',type=int,choices=(1,2,4,8),default=4)

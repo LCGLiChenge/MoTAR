@@ -46,6 +46,11 @@ def verify_shards(out,n,digest,workers=8):
             or receipt['ids']!=ids.tolist() or not receipt['anchors_unchanged']
             or manifest['checkpoint_sha256']!=digest or manifest['n']!=n):
             raise RuntimeError(f'shard {shard} identity/coverage mismatch')
+        route_counts=receipt.get('route_counts')
+        if (not isinstance(route_counts,dict) or route_counts.get('n')!=len(ids)
+            or route_counts.get('k64',-1)<0 or route_counts.get('k128',-1)<0
+            or route_counts['k64']+route_counts['k128']!=len(ids)):
+            raise RuntimeError(f'shard {shard} Router token counts are missing or invalid')
         for arm in ('base','full_refine'):
             path=out/f'{arm}_shard{shard}.npy'
             if sha256(path)!=receipt['hashes'][arm]: raise RuntimeError('feature hash mismatch')
@@ -76,6 +81,7 @@ def run(args):
                 source_sha256=sha256(Path(__file__)),seed=args.seed,n=args.n,
                 batch=8,logical_shards=4,stage2_steps=args.stage2_steps,router_mode=args.router_mode,
                 mapper_checkpoint=(str(args.mapper_checkpoint.resolve()) if args.mapper_checkpoint else None),
+                router_proxy_checkpoint=(str(args.router_proxy_checkpoint.resolve()) if args.router_proxy_checkpoint else None),
                 sampling_unchanged=args.stage2_steps==32))
     workers=[]
     try:
@@ -93,6 +99,8 @@ def run(args):
                      '--worker-shard',str(shard),'--worker-count',str(worker_count)]
             if args.mapper_checkpoint is not None:
                 command.extend(('--mapper-checkpoint',str(args.mapper_checkpoint)))
+            if args.router_proxy_checkpoint is not None:
+                command.extend(('--router-proxy-checkpoint',str(args.router_proxy_checkpoint)))
             try: child=subprocess.Popen(command,env=env,stdout=log,stderr=subprocess.STDOUT)
             except BaseException: log.close();raise
             workers.append((child,log))
@@ -114,9 +122,17 @@ def run(args):
         for child,log in workers:
             child.wait();log.close()
     manifests,receipts=verify_shards(out,args.n,digest,worker_count)
+    k64=sum(row['route_counts']['k64'] for row in receipts)
+    k128=sum(row['route_counts']['k128'] for row in receipts)
+    if k64+k128!=args.n: raise RuntimeError('global Router token count mismatch')
+    mean_2d=(64*k64+128*k128)/args.n
+    tokens=dict(n=args.n,k64=k64,k128=k128,mean_1d=32,
+                mean_generated_2d=mean_2d,mean_generated_total=32+mean_2d,
+                proxy_context_2d_tokens=256)
     if manifests[0]['seed']!=args.seed: raise RuntimeError('worker seed mismatch')
     manifest=dict(manifests[0]);manifest.pop('physical_gpu',None)
-    manifest.update(physical_gpus=gpus,workers=worker_count,coordinator_sha256=sha256(Path(__file__)))
+    manifest.update(physical_gpus=gpus,workers=worker_count,coordinator_sha256=sha256(Path(__file__)),
+                    tokens=tokens)
     atomic_json(out/'manifest.json',manifest)
     atomic_json(out/'status.json',dict(status='computing_fid',completed=args.n,total=args.n,workers=worker_count,
                                      seconds=time.monotonic()-started))
@@ -135,7 +151,7 @@ def run(args):
                 features=np.concatenate([np.load(out/f'{arm}_shard{s}.npy') for s in range(worker_count)])
                 stats=module.FIDStatistics(np.mean(features,axis=0),np.cov(features,rowvar=False))
                 metrics[arm]=dict(fid=float(stats.frechet_distance(ref)))
-    result=dict(status='complete',n=args.n,step=manifest['step'],metrics=metrics,checkpoint_sha256=digest,
+    result=dict(status='complete',n=args.n,step=manifest['step'],metrics=metrics,tokens=tokens,checkpoint_sha256=digest,
         seconds=time.monotonic()-started,smoke=args.n not in (5000,50000),anchors_unchanged=True,workers=worker_count,
         peak_reserved_gib=max(r['peak_reserved_gib'] for r in receipts))
     atomic_json(out/'summary.json',result)
@@ -152,7 +168,8 @@ def cli():
     p.add_argument('--seed',type=int,default=20260914)
     p.add_argument('--cfg-w',type=float,default=1.5)
     p.add_argument('--stage2-steps',type=int,choices=(1,2,4,6,8,16,32),default=32)
-    p.add_argument('--router-mode',choices=('e117','parent-only'),default='e117')
+    p.add_argument('--router-mode',choices=('e117','parent-only','no-xbase'),default='e117')
+    p.add_argument('--router-proxy-checkpoint',type=Path)
     p.add_argument('--mapper-checkpoint',type=Path)
     p.add_argument('--workers',type=int,choices=(1,2,4,8),default=8)
     # This deployment is explicitly authorized on all eight H20s; the parent

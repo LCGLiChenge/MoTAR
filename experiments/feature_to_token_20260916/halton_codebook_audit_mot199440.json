@@ -1,0 +1,13 @@
+{
+  "decision_rule": "paired cosine >=0.90 AND nearest same ID >=0.50",
+  "id_space": "MoT EMA 2D IDs for both proxy and GT",
+  "mot_sha256": "86c8f9da5e61261ab93066c73d7719203e8c00b69f05b805c5937e6b7319b446",
+  "mot_step": 199440,
+  "nearest_same_id_fraction": 1.0,
+  "original_vq_sha256": "109aa8afb2cf3761eec23cdc8644154cb498f5ab7eef2a35264d25e5e0499f7d",
+  "paired_cosine_mean": 1.0,
+  "paired_cosine_median": 1.0,
+  "paired_l2_mean": 2.0239801870047813e-06,
+  "status": "complete",
+  "transfer_token_embedding": true
+}

@@ -110,10 +110,21 @@ class ProxyRouteDataset(E117SparseCodeDataset):
         summary = json.loads((proxy_root / "summary.json").read_text())
         if summary.get("status") != "complete" or not summary.get("complete_coverage"):
             raise RuntimeError("proxy cache is not complete")
-        if config.get("format") != "mot199440_1d_base_rgb_reencoded_proxy_v1":
+        if config.get("format") not in (
+            "mot199440_1d_base_rgb_reencoded_proxy_v1", "f1d_mapper_proxy_v1"
+        ):
             raise RuntimeError("proxy cache has wrong semantics")
+        if config["format"] == "f1d_mapper_proxy_v1":
+            route_meta = json.loads((self.route_cache / "meta.json").read_text())
+            if route_meta.get("router_mode") != "no-xbase" or (
+                route_meta.get("router_proxy_sha256") != config.get("router_proxy_sha256")
+                or route_meta.get("mapper_sha256") != config.get("mapper_checkpoint_sha256")
+            ):
+                raise RuntimeError("mapper proxy and no-xbase route cache identities differ")
         self.proxy = np.load(proxy_root / "proxy_codes.npy", mmap_mode="r", allow_pickle=False)
-        if self.proxy.shape != (2562334, 256) or self.proxy.dtype != np.uint16:
+        expected_shape = ((2562334, 256) if config["format"] != "f1d_mapper_proxy_v1"
+                          else tuple(config["shape"]))
+        if self.proxy.shape != expected_shape or self.proxy.dtype != np.uint16:
             raise RuntimeError("proxy cache shape/dtype mismatch")
         if summary.get("proxy_codes_sha256") is None:
             raise RuntimeError("proxy cache lacks final SHA256")
